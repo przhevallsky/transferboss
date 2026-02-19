@@ -36,13 +36,13 @@ class Transfer(
     @Column(name = "send_amount", nullable = false, precision = 15, scale = 2)
     val sendAmount: BigDecimal,
 
-    @Column(name = "send_currency", nullable = false, length = 3)
+    @Column(name = "send_currency", nullable = false, columnDefinition = "char(3)")
     val sendCurrency: String,
 
     @Column(name = "receive_amount", nullable = false, precision = 15, scale = 2)
     val receiveAmount: BigDecimal,
 
-    @Column(name = "receive_currency", nullable = false, length = 3)
+    @Column(name = "receive_currency", nullable = false, columnDefinition = "char(3)")
     val receiveCurrency: String,
 
     @Column(name = "exchange_rate", nullable = false, precision = 12, scale = 6)
@@ -51,14 +51,14 @@ class Transfer(
     @Column(name = "fee_amount", nullable = false, precision = 10, scale = 2)
     val feeAmount: BigDecimal,
 
-    @Column(name = "fee_currency", nullable = false, length = 3)
+    @Column(name = "fee_currency", nullable = false, columnDefinition = "char(3)")
     val feeCurrency: String,
 
     // --- Маршрут ---
-    @Column(name = "source_country", nullable = false, length = 2)
+    @Column(name = "source_country", nullable = false, columnDefinition = "char(2)")
     val sourceCountry: String,
 
-    @Column(name = "dest_country", nullable = false, length = 2)
+    @Column(name = "dest_country", nullable = false, columnDefinition = "char(2)")
     val destCountry: String,
 
     @Column(name = "delivery_method", nullable = false, length = 30)

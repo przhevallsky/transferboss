@@ -34,7 +34,7 @@ class Recipient(
     var lastName: String,
 
     /** Страна получателя (ISO 3166-1 alpha-2) */
-    @Column(name = "country", nullable = false, length = 2)
+    @Column(name = "country", nullable = false, columnDefinition = "char(2)")
     val country: String,
 
     /** Реквизиты доставки — JSONB, структура зависит от delivery method */

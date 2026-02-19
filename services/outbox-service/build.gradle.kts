@@ -5,6 +5,12 @@ plugins {
     alias(libs.plugins.spring.dependency.mgmt)
 }
 
+dependencyManagement {
+    imports {
+        mavenBom("org.testcontainers:testcontainers-bom:${libs.versions.testcontainers.get()}")
+    }
+}
+
 dependencies {
     // Spring
     implementation(libs.spring.boot.starter.web)         // Health endpoints
@@ -34,7 +40,6 @@ dependencies {
     }
     testImplementation(libs.mockk)
     testImplementation(libs.kotest.assertions.core)
-    testImplementation(platform(libs.testcontainers.bom))
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.kafka)

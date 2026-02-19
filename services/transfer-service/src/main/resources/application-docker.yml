@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:postgresql://transferhub-postgres:5432/transfer_db
+    url: jdbc:postgresql://transferhub-postgres:5432/transferhub
 
   data:
     redis:

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Project Documentation
+    url: https://github.com/przhevallsky/transferboss/tree/main/docs
+    about: Check architecture docs and ADRs before creating an issue

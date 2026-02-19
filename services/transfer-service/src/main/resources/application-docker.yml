@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://transferhub-postgres:5432/transfer_db
+
+  data:
+    redis:
+      host: transferhub-redis
+
+  kafka:
+    bootstrap-servers: transferhub-kafka:29092
+
+  cloud:
+    consul:
+      host: transferhub-consul

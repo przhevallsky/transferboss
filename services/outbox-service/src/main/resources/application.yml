@@ -1,0 +1,87 @@
+spring:
+  application:
+    name: outbox-service
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/transfer_db
+    username: transferhub
+    password: transferhub_dev
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      connection-timeout: 5000
+      idle-timeout: 300000
+      max-lifetime: 600000
+      pool-name: outbox-pool
+      register-mbeans: true
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+
+  # Flyway disabled — migrations are managed by Transfer Service
+  flyway:
+    enabled: false
+
+  # Kafka Producer
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      acks: all
+      retries: 3
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        batch.size: 16384
+        linger.ms: 5
+
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+    default-property-inclusion: non_null
+    property-naming-strategy: SNAKE_CASE
+
+# Custom Outbox Polling configuration
+outbox:
+  polling:
+    interval-ms: 500
+    batch-size: 100
+    target-topic: transfer.events
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        outbox.poll.duration: true
+        outbox.publish.duration: true
+
+# Server — different port to avoid conflict with Transfer Service
+server:
+  port: 8081
+  shutdown: graceful
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.swiftpay: DEBUG
+    org.springframework.kafka: INFO
+    org.apache.kafka: WARN

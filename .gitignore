@@ -1,0 +1,45 @@
+# === IDE ===
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# === Build ===
+build/
+out/
+target/
+bin/
+
+# === Gradle ===
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+
+# === Kotlin ===
+*.class
+
+# === Go ===
+services/notification-gateway/notification-gateway
+
+# === Environment ===
+.env
+*.env
+!infra/docker/.env
+.env.local
+.env.production
+*.env.secret
+
+# === Docker ===
+# infra/docker/.env is excluded from the ignore via negation above
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Logs ===
+*.log
+logs/
+
+# === Test ===
+*.exec
+test-results/

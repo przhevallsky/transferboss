@@ -1,0 +1,257 @@
+name: CI Pipeline
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Triggers
+# ═══════════════════════════════════════════════════════════════════════════════
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+# Cancel previous runs of the same PR on new push.
+# On main (ref = refs/heads/main) — never cancel: every commit must be verified.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Global environment variables
+# ═══════════════════════════════════════════════════════════════════════════════
+env:
+  JAVA_VERSION: '21'
+  JAVA_DISTRIBUTION: 'temurin'
+  GRADLE_BUILD_ACTION_CACHE_DEBUG_ENABLED: false
+
+  # Gradle: disable daemon in CI (one-shot process, daemon only wastes memory)
+  GRADLE_OPTS: >-
+    -Dorg.gradle.daemon=false
+    -Dorg.gradle.parallel=true
+    -Dorg.gradle.caching=true
+    -Dorg.gradle.console=plain
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Jobs
+# ═══════════════════════════════════════════════════════════════════════════════
+jobs:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 1. DETECT CHANGES
+  # ─────────────────────────────────────────────────────────────────────────────
+  detect-changes:
+    name: "🔍 Detect Changes"
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      transfer-service: ${{ steps.filter.outputs.transfer-service }}
+      outbox-service: ${{ steps.filter.outputs.outbox-service }}
+      pricing-service: ${{ steps.filter.outputs.pricing-service }}
+      shared: ${{ steps.filter.outputs.shared }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            transfer-service:
+              - 'services/transfer-service/**'
+            outbox-service:
+              - 'services/outbox-service/**'
+            pricing-service:
+              - 'services/pricing-service/**'
+            shared:
+              - 'build.gradle.kts'
+              - 'settings.gradle.kts'
+              - 'gradle/**'
+              - 'buildSrc/**'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 2. TRANSFER SERVICE — Spring Boot (port 8080)
+  # ─────────────────────────────────────────────────────────────────────────────
+  transfer-service:
+    name: "🏦 Transfer Service"
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: >-
+      needs.detect-changes.outputs.transfer-service == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      github.event_name == 'push'
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # ── Lint / Compile ──────────────────────────────────────────────
+      - name: Compile
+        run: ./gradlew :services:transfer-service:compileKotlin
+
+      # ── Test ────────────────────────────────────────────────────────
+      - name: Test
+        run: ./gradlew :services:transfer-service:test
+
+      # ── Upload test report ──────────────────────────────────────────
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: transfer-service-test-results
+          path: services/transfer-service/build/reports/tests/
+          retention-days: 7
+
+      # ── Build JAR ───────────────────────────────────────────────────
+      - name: Build
+        run: ./gradlew :services:transfer-service:bootJar -x test
+
+      # ── Build Docker Image ──────────────────────────────────────────
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f services/transfer-service/Dockerfile \
+            -t transferhub/transfer-service:${{ github.sha }} \
+            .
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 3. OUTBOX SERVICE — Spring Boot (port 8081)
+  # ─────────────────────────────────────────────────────────────────────────────
+  outbox-service:
+    name: "📤 Outbox Service"
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: >-
+      needs.detect-changes.outputs.outbox-service == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      github.event_name == 'push'
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile
+        run: ./gradlew :services:outbox-service:compileKotlin
+
+      - name: Test
+        run: ./gradlew :services:outbox-service:test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: outbox-service-test-results
+          path: services/outbox-service/build/reports/tests/
+          retention-days: 7
+
+      - name: Build
+        run: ./gradlew :services:outbox-service:bootJar -x test
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f services/outbox-service/Dockerfile \
+            -t transferhub/outbox-service:${{ github.sha }} \
+            .
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 4. PRICING SERVICE — Ktor + gRPC (ports 8082 HTTP, 50051 gRPC)
+  # ─────────────────────────────────────────────────────────────────────────────
+  pricing-service:
+    name: "💱 Pricing Service"
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: >-
+      needs.detect-changes.outputs.pricing-service == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      github.event_name == 'push'
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Compile includes Protobuf code generation (.proto → Kotlin classes)
+      - name: Compile (includes Protobuf codegen)
+        run: ./gradlew :services:pricing-service:compileKotlin
+
+      - name: Test
+        run: ./gradlew :services:pricing-service:test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pricing-service-test-results
+          path: services/pricing-service/build/reports/tests/
+          retention-days: 7
+
+      # Pricing Service uses `application` plugin (not Spring Boot).
+      # `installDist` creates executable distribution with shell launch script.
+      - name: Build
+        run: ./gradlew :services:pricing-service:installDist -x test
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -f services/pricing-service/Dockerfile \
+            -t transferhub/pricing-service:${{ github.sha }} \
+            .
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 5. CI GATE — final check that all required jobs passed
+  # ─────────────────────────────────────────────────────────────────────────────
+  ci-gate:
+    name: "✅ CI Gate"
+    runs-on: ubuntu-latest
+    needs: [ transfer-service, outbox-service, pricing-service ]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "Transfer Service: ${{ needs.transfer-service.result }}"
+          echo "Outbox Service:   ${{ needs.outbox-service.result }}"
+          echo "Pricing Service:  ${{ needs.pricing-service.result }}"
+
+          # Job result: success | failure | cancelled | skipped
+          # skipped — OK (no changes, job was not triggered)
+          # success — OK (job passed)
+          # failure or cancelled — block merge
+
+          for result in \
+            "${{ needs.transfer-service.result }}" \
+            "${{ needs.outbox-service.result }}" \
+            "${{ needs.pricing-service.result }}"
+          do
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              echo "❌ CI failed: at least one service job failed or was cancelled"
+              exit 1
+            fi
+          done
+
+          echo "✅ All service jobs passed (or were skipped due to no changes)"

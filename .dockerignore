@@ -1,0 +1,13 @@
+.git
+.github
+.idea
+.vscode
+*.md
+docs/
+infra/terraform/
+infra/helm/
+**/.gradle/
+**/build/
+**/out/
+**/node_modules/
+**/*.log

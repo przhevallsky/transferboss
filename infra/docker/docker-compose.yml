@@ -1,0 +1,154 @@
+# TransferHub — Docker Compose for local development
+# Usage: docker compose up -d
+
+# Future profiles:
+# docker compose --profile monitoring up  → Prometheus, Grafana, Loki, Tempo
+# docker compose --profile localstack up  → AWS emulation (S3, SQS, SNS)
+
+services:
+
+  # ──────────────────────────────────────────────
+  # PostgreSQL 16 — Relational storage
+  # ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: transferhub-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init/:/docker-entrypoint-initdb.d/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transferhub -d transferhub"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - transferhub-network
+
+  # ──────────────────────────────────────────────
+  # MongoDB 7 — Document storage
+  # ──────────────────────────────────────────────
+  mongo:
+    image: mongo:7
+    container_name: transferhub-mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: pricing_db
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo/init/:/docker-entrypoint-initdb.d/
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - transferhub-network
+
+  # ──────────────────────────────────────────────
+  # Redis 7 — Caching / acceleration layer
+  # ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: transferhub-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - transferhub-network
+
+  # ──────────────────────────────────────────────
+  # Apache Kafka (KRaft mode — no Zookeeper)
+  # ──────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: transferhub-kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@transferhub-kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://transferhub-kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_RETENTION_HOURS: 168
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - transferhub-network
+
+  # ──────────────────────────────────────────────
+  # Kafka Init — one-shot topic creation
+  # ──────────────────────────────────────────────
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: transferhub-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/scripts/create-topics.sh"]
+    volumes:
+      - ./kafka/init/:/scripts/
+    restart: "no"
+    networks:
+      - transferhub-network
+
+  # ──────────────────────────────────────────────
+  # Consul 1.18 — Distributed locking
+  # ──────────────────────────────────────────────
+  consul:
+    image: hashicorp/consul:1.18
+    container_name: transferhub-consul
+    ports:
+      - "8500:8500"
+    command: agent -server -bootstrap-expect=1 -ui -client=0.0.0.0 -bind=0.0.0.0
+    volumes:
+      - consul-data:/consul/data
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - transferhub-network
+
+networks:
+  transferhub-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  mongo-data:
+  redis-data:
+  kafka-data:
+  consul-data:

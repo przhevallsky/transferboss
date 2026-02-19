@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package com.transferhub.pricing.v1;
+
+option java_multiple_files = true;
+option java_package = "com.transferhub.pricing.grpc.v1";
+
+// PricingService — gRPC API for transfer quote calculation.
+// Called synchronously from Transfer Service when creating a transfer.
+// ~200 RPS, target latency p99 < 150ms.
+service PricingService {
+
+  // GetQuote — main method. Calculates fee + exchange rate + receive amount.
+  // Creates a rate lock in Redis (TTL 30 seconds): quote_id → rate mapping.
+  rpc GetQuote (GetQuoteRequest) returns (QuoteResponse);
+
+  // ValidateQuote — checks if a quote is still valid (TTL not expired).
+  rpc ValidateQuote (ValidateQuoteRequest) returns (ValidateQuoteResponse);
+}
+
+message GetQuoteRequest {
+  string source_country = 1;
+  string destination_country = 2;
+  string send_currency = 3;
+  string receive_currency = 4;
+  string send_amount = 5;
+  string delivery_method = 6;
+  string sender_id = 7;
+}
+
+message QuoteResponse {
+  string quote_id = 1;
+  string send_amount = 2;
+  string receive_amount = 3;
+  string exchange_rate = 4;
+  string fee_amount = 5;
+  string fee_currency = 6;
+  string send_currency = 7;
+  string receive_currency = 8;
+  string delivery_method = 9;
+  int64 expires_at_epoch_ms = 10;
+  int32 ttl_seconds = 11;
+}
+
+message ValidateQuoteRequest {
+  string quote_id = 1;
+}
+
+message ValidateQuoteResponse {
+  bool is_valid = 1;
+  QuoteResponse quote = 2;
+  string rejection_reason = 3;
+}

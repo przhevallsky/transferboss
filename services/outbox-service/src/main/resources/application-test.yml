@@ -1,0 +1,15 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: none
+
+# Disable automatic polling in tests — tests invoke polling manually
+outbox:
+  polling:
+    interval-ms: 999999
+
+logging:
+  level:
+    root: WARN
+    com.swiftpay: DEBUG
+    org.springframework.kafka: DEBUG

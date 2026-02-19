@@ -1,0 +1,19 @@
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <customFields>{"service_name":"pricing-service"}</customFields>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <!-- Reduce noise from libraries -->
+    <logger name="io.netty" level="WARN"/>
+    <logger name="io.grpc" level="WARN"/>
+    <logger name="org.mongodb" level="WARN"/>
+    <logger name="io.lettuce" level="WARN"/>
+</configuration>

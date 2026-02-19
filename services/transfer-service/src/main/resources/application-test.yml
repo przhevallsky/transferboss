@@ -1,0 +1,17 @@
+spring:
+  flyway:
+    clean-disabled: false
+
+  cloud:
+    consul:
+      enabled: false
+      discovery:
+        enabled: false
+
+  kafka:
+    bootstrap-servers: ${spring.embedded.kafka.brokers:localhost:9092}
+
+logging:
+  level:
+    com.swiftpay: DEBUG
+    org.testcontainers: INFO

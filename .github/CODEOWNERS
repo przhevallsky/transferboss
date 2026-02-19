@@ -1,0 +1,28 @@
+# =============================================
+# TransferHub CODEOWNERS
+# =============================================
+# В реальной команде (как описано в team-and-processes.md):
+# Daniel Kim (Tech Lead) — архитектурные решения, инфра, saga
+# Я — Transfer Service, Pricing Service, Outbox Service
+# James — Notification Gateway (Go)
+# Priya — бэкенд + Kafka consumers
+# Ahmed — QA, тестовая инфраструктура
+
+# Default: все файлы
+* @przhevallsky
+
+# --- Сервисы ---
+# /services/transfer-service/       @przhevallsky  # В реальности: @daniel-kim @przhevallsky
+# /services/pricing-service/        @przhevallsky  # В реальности: @przhevallsky @priya-dev
+# /services/outbox-service/         @przhevallsky  # В реальности: @przhevallsky @daniel-kim
+# /services/notification-gateway/   @przhevallsky  # В реальности: @james-dev
+
+# --- Инфраструктура (критично — ошибка может положить prod) ---
+# /infra/                           @przhevallsky  # В реальности: @daniel-kim @przhevallsky
+# /.github/workflows/               @przhevallsky  # В реальности: @daniel-kim
+
+# --- Protobuf-контракты (затрагивают несколько сервисов) ---
+# /proto/                           @przhevallsky  # В реальности: @daniel-kim @przhevallsky @priya-dev
+
+# --- Документация ---
+# /docs/adr/                        @przhevallsky  # В реальности: @daniel-kim

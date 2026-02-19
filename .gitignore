@@ -1,7 +1,8 @@
-# === IDE ===
+# === IDE / Tools ===
 .idea/
 *.iml
 .vscode/
+.claude/
 *.swp
 *.swo
 

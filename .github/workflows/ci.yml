@@ -30,6 +30,11 @@ env:
     -Dorg.gradle.caching=true
     -Dorg.gradle.console=plain
 
+  # Testcontainers: explicit Docker socket for GitHub Actions runners
+  DOCKER_HOST: unix:///var/run/docker.sock
+  TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: /var/run/docker.sock
+  TESTCONTAINERS_RYUK_DISABLED: true
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Jobs
 # ═══════════════════════════════════════════════════════════════════════════════

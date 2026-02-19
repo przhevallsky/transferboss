@@ -115,7 +115,7 @@ jobs:
 
       # ── Test ────────────────────────────────────────────────────────
       - name: Test
-        run: ./gradlew :services:transfer-service:test
+        run: ./gradlew :services:transfer-service:test --info 2>&1 | grep -iE "(testcontainers|docker|strategy|provider|socket|error|FAIL)" | head -50
 
       # ── Upload test report ──────────────────────────────────────────
       - name: Upload test results

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod:*)",
+      "Bash(gradle:*)",
+      "Bash(java -version:*)",
+      "Bash(./gradlew:*)",
+      "Bash(docker info:*)",
+      "Bash(docker version:*)",
+      "Bash(powershell -Command \"Get-ChildItem -Path ''C:\\\\Users\\\\workpc\\\\.gradle'' -Recurse -Filter ''*call-logging*2.3.12*'' -ErrorAction SilentlyContinue | Select-Object -First 5 -ExpandProperty FullName\")",
+      "Bash(jar tf:*)",
+      "Bash(powershell -Command \"[System.IO.Compression.ZipFile]::OpenRead\\(''C:\\\\Users\\\\workpc\\\\.gradle\\\\caches\\\\modules-2\\\\files-2.1\\\\io.ktor\\\\ktor-server-call-logging-jvm\\\\2.3.12\\\\b8a3707f2dcc23e777cedf324a3a5f1754f3c2d4\\\\ktor-server-call-logging-jvm-2.3.12.jar''\\).Entries | Where-Object { $_.FullName -like ''*.class'' } | Select-Object -First 20 -ExpandProperty FullName\")",
+      "Bash(powershell -Command \"Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::OpenRead\\(''C:\\\\Users\\\\workpc\\\\.gradle\\\\caches\\\\modules-2\\\\files-2.1\\\\io.ktor\\\\ktor-server-call-logging-jvm\\\\2.3.12\\\\b8a3707f2dcc23e777cedf324a3a5f1754f3c2d4\\\\ktor-server-call-logging-jvm-2.3.12.jar''\\).Entries | Where-Object { $_.FullName -like ''*.class'' } | Select-Object -First 20 -ExpandProperty FullName\")",
+      "Bash(gh auth:*)",
+      "Bash(gh label create:*)",
+      "Bash(gh api:*)",
+      "Bash(git -C /c/Users/workpc/Desktop/transferboss log:*)",
+      "Bash(find:*)",
+      "WebSearch"
+    ]
+  }
+}

@@ -16,7 +16,8 @@
       "Bash(gh api:*)",
       "Bash(git -C /c/Users/workpc/Desktop/transferboss log:*)",
       "Bash(find:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(gh run:*)"
     ]
   }
 }

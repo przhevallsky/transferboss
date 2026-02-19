@@ -12,16 +12,16 @@ CREATE TABLE transfers (
 
     -- Финансовые данные
     send_amount       NUMERIC(15,2)   NOT NULL,
-    send_currency     CHAR(3)         NOT NULL,
+    send_currency     VARCHAR(3)         NOT NULL,
     receive_amount    NUMERIC(15,2)   NOT NULL,
-    receive_currency  CHAR(3)         NOT NULL,
+    receive_currency  VARCHAR(3)         NOT NULL,
     exchange_rate     NUMERIC(12,6)   NOT NULL,
     fee_amount        NUMERIC(10,2)   NOT NULL,
-    fee_currency      CHAR(3)         NOT NULL,
+    fee_currency      VARCHAR(3)         NOT NULL,
 
     -- Маршрут
-    source_country    CHAR(2)         NOT NULL,
-    dest_country      CHAR(2)         NOT NULL,
+    source_country    VARCHAR(2)         NOT NULL,
+    dest_country      VARCHAR(2)         NOT NULL,
     delivery_method   VARCHAR(30)     NOT NULL,
 
     -- Получатель

@@ -7,6 +7,7 @@ import org.springframework.test.context.DynamicPropertySource
 import org.testcontainers.kafka.KafkaContainer
 import org.testcontainers.postgresql.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Testcontainers
+import java.time.Duration
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -26,6 +27,7 @@ abstract class IntegrationTestBase {
 
         @JvmStatic
         val kafka = KafkaContainer("apache/kafka:3.8.0").apply {
+            withStartupTimeout(Duration.ofMinutes(3))
             start()
         }
 

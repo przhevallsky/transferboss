@@ -172,7 +172,7 @@ jobs:
         run: ./gradlew :services:outbox-service:compileKotlin
 
       - name: Test
-        run: ./gradlew :services:outbox-service:test
+        run: ./gradlew :services:outbox-service:test --info
 
       - name: Upload test results
         if: always()

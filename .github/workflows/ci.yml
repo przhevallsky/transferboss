@@ -89,6 +89,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure Docker is running
+        run: |
+          echo "--- Docker socket ---"
+          ls -la /var/run/docker.sock 2>&1 || true
+          echo "--- Docker daemon status ---"
+          sudo systemctl status docker --no-pager 2>&1 || true
+          echo "--- Starting Docker if needed ---"
+          sudo systemctl start docker || true
+          echo "--- Docker info ---"
+          docker info 2>&1 | head -20
+
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
@@ -143,6 +154,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure Docker is running
+        run: |
+          sudo systemctl start docker || true
+          docker info 2>&1 | head -5
+
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
@@ -191,6 +207,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Ensure Docker is running
+        run: |
+          sudo systemctl start docker || true
+          docker info 2>&1 | head -5
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4

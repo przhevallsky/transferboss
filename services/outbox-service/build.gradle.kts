@@ -42,7 +42,6 @@ dependencies {
     testImplementation(libs.kotest.assertions.core)
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.postgresql)
-    testImplementation(libs.testcontainers.kafka)
     testImplementation(libs.spring.kafka.test)
 }
 

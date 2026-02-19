@@ -17,8 +17,7 @@ abstract class IntegrationTestBase {
 
         @Container
         @JvmStatic
-        val postgres: PostgreSQLContainer<*> =
-            PostgreSQLContainer("postgres:16-alpine")
+        val postgres = PostgreSQLContainer("postgres:16-alpine")
                 .withDatabaseName("transfer_db")
                 .withUsername("test")
                 .withPassword("test")

@@ -4,6 +4,7 @@ import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.serialization.json.*
 
 fun Application.configureRouting() {
     routing {
@@ -25,21 +26,19 @@ fun Application.configureRouting() {
 
         route("/api/v1") {
             get("/corridors") {
-                call.respond(
-                    HttpStatusCode.OK,
-                    mapOf(
-                        "corridors" to listOf(
-                            mapOf(
-                                "source_country" to "GB",
-                                "destination_country" to "PL",
-                                "send_currency" to "GBP",
-                                "receive_currency" to "PLN",
-                                "delivery_methods" to listOf("BANK_TRANSFER"),
-                                "active" to true
-                            )
-                        )
-                    )
-                )
+                val body = buildJsonObject {
+                    putJsonArray("corridors") {
+                        addJsonObject {
+                            put("source_country", "GB")
+                            put("destination_country", "PL")
+                            put("send_currency", "GBP")
+                            put("receive_currency", "PLN")
+                            putJsonArray("delivery_methods") { add("BANK_TRANSFER") }
+                            put("active", true)
+                        }
+                    }
+                }
+                call.respondText(body.toString(), ContentType.Application.Json, HttpStatusCode.OK)
             }
         }
     }

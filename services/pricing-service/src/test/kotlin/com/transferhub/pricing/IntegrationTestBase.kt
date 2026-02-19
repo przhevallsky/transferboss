@@ -8,7 +8,7 @@ import com.transferhub.pricing.config.ServerConfig
 import com.transferhub.pricing.plugins.*
 import io.ktor.server.testing.*
 import org.testcontainers.containers.GenericContainer
-import org.testcontainers.containers.MongoDBContainer
+import org.testcontainers.mongodb.MongoDBContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 

@@ -1,17 +1,20 @@
 package com.swiftpay.outbox
 
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.kafka.test.context.EmbeddedKafka
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
-import org.testcontainers.containers.KafkaContainer
-import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.postgresql.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Testcontainers
-import org.testcontainers.utility.DockerImageName
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 @Testcontainers
+@EmbeddedKafka(
+    partitions = 1,
+    topics = ["transfer.events"],
+)
 abstract class IntegrationTestBase {
 
     companion object {
@@ -26,20 +29,12 @@ abstract class IntegrationTestBase {
         }
 
         @JvmStatic
-        val kafka = KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.6.0")).apply {
-            start()
-        }
-
-        @JvmStatic
         @DynamicPropertySource
         fun configureProperties(registry: DynamicPropertyRegistry) {
             // PostgreSQL
             registry.add("spring.datasource.url", postgres::getJdbcUrl)
             registry.add("spring.datasource.username", postgres::getUsername)
             registry.add("spring.datasource.password", postgres::getPassword)
-
-            // Kafka
-            registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers)
         }
     }
 }

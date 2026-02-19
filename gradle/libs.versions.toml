@@ -3,7 +3,7 @@ kotlin              = "1.9.25"
 spring-boot         = "3.3.4"
 spring-dep-mgmt     = "1.1.6"
 spring-cloud        = "2023.0.3"
-testcontainers      = "1.20.1"
+testcontainers      = "2.0.2"
 jib                 = "3.4.3"
 flyway              = "10.17.2"
 mockk               = "1.13.12"
@@ -89,11 +89,11 @@ spring-boot-starter-test        = { module = "org.springframework.boot:spring-bo
 spring-kafka-test               = { module = "org.springframework.kafka:spring-kafka-test" }
 mockk                           = { module = "io.mockk:mockk",                           version.ref = "mockk" }
 kotest-assertions-core          = { module = "io.kotest:kotest-assertions-core",          version.ref = "kotest" }
-testcontainers-bom              = { module = "org.testcontainers:testcontainers-bom",     version.ref = "testcontainers" }
-testcontainers-junit            = { module = "org.testcontainers:junit-jupiter",          version.ref = "testcontainers" }
-testcontainers-postgresql       = { module = "org.testcontainers:postgresql",             version.ref = "testcontainers" }
-testcontainers-kafka            = { module = "org.testcontainers:kafka",                  version.ref = "testcontainers" }
-testcontainers-mongodb          = { module = "org.testcontainers:mongodb",               version.ref = "testcontainers" }
+testcontainers-bom              = { module = "org.testcontainers:testcontainers-bom",               version.ref = "testcontainers" }
+testcontainers-junit            = { module = "org.testcontainers:testcontainers-junit-jupiter",    version.ref = "testcontainers" }
+testcontainers-postgresql       = { module = "org.testcontainers:testcontainers-postgresql",       version.ref = "testcontainers" }
+testcontainers-kafka            = { module = "org.testcontainers:testcontainers-kafka",            version.ref = "testcontainers" }
+testcontainers-mongodb          = { module = "org.testcontainers:testcontainers-mongodb",         version.ref = "testcontainers" }
 
 [plugins]
 kotlin-jvm             = { id = "org.jetbrains.kotlin.jvm",                    version.ref = "kotlin" }

@@ -5,7 +5,7 @@ CREATE TABLE recipients (
     -- Данные получателя
     first_name        VARCHAR(100)    NOT NULL,
     last_name         VARCHAR(100)    NOT NULL,
-    country           CHAR(2)         NOT NULL,
+    country           VARCHAR(2)      NOT NULL,
 
     -- Реквизиты доставки — JSONB т.к. разные delivery methods имеют разный набор полей:
     -- bank_deposit: {"bank_name": "BDO", "account_number": "123", "branch_code": "001"}

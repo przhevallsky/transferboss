@@ -74,7 +74,7 @@ class Transfer(
     @Convert(converter = TransferStatusConverter::class)
     var status: TransferStatus = TransferStatus.Created,
 
-    @Column(name = "status_reason")
+    @Column(name = "status_reason", columnDefinition = "text")
     var statusReason: String? = null,
 
     // --- Saga tracking (заполняются позже, при получении событий) ---

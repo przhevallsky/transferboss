@@ -59,6 +59,13 @@ spring:
         health-check-path: /actuator/health
         health-check-interval: 10s
 
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
   lifecycle:
     timeout-per-shutdown-phase: 30s
 

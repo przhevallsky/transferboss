@@ -95,6 +95,14 @@ springdoc:
   default-produces-media-type: application/json
   default-consumes-media-type: application/json
 
+consul:
+  lock:
+    enabled: true
+    session-ttl-seconds: 15
+    acquire-timeout-ms: 5000
+    retry-interval-ms: 50
+    key-prefix: locks/transfer
+
 logging:
   level:
     com.swiftpay: DEBUG

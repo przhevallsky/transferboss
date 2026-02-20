@@ -47,7 +47,11 @@ dependencies {
     implementation(libs.micrometer.prometheus)
 
     // Test
-    testImplementation(libs.spring.boot.starter.test)
+    testImplementation(libs.spring.boot.starter.test) {
+        exclude(module = "mockito-core")
+        exclude(module = "mockito-junit-jupiter")
+    }
+    testImplementation(libs.mockk)
     testImplementation(libs.spring.kafka.test)
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.postgresql)

@@ -95,6 +95,10 @@ class TransferController(
         @RequestParam(defaultValue = "20") limit: Int
     ): ResponseEntity<PaginatedResponse<TransferResponse>> {
 
+        if (limit < 1 || limit > 100) {
+            throw IllegalArgumentException("limit must be between 1 and 100, got: $limit")
+        }
+
         val senderId = senderIdHeader ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
         val (transfers, nextCursor) = transferService.listTransfers(senderId, cursor, limit)
 

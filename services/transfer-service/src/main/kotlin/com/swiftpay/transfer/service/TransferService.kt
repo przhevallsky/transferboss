@@ -6,6 +6,8 @@ import com.swiftpay.transfer.domain.vo.DeliveryMethod
 import com.swiftpay.transfer.domain.vo.OutboxEventStatus
 import com.swiftpay.transfer.domain.vo.OutboxEventType
 import com.swiftpay.transfer.exception.*
+import com.swiftpay.transfer.lock.ConsulLockProperties
+import com.swiftpay.transfer.lock.DistributedLockService
 import com.swiftpay.transfer.repository.*
 import com.swiftpay.transfer.service.dto.CreateTransferCommand
 import org.slf4j.LoggerFactory
@@ -23,7 +25,9 @@ class TransferService(
     private val outboxEventRepository: OutboxEventRepository,
     private val recipientRepository: RecipientRepository,
     private val idempotencyKeyRepository: IdempotencyKeyRepository,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val distributedLockService: DistributedLockService,
+    private val consulLockProperties: ConsulLockProperties
 ) {
     private val log = LoggerFactory.getLogger(TransferService::class.java)
 
@@ -55,72 +59,75 @@ class TransferService(
      */
     @Transactional
     fun createTransfer(command: CreateTransferCommand): Pair<Transfer, Boolean> {
+        val lockKey = "idempotency/${command.idempotencyKey}"
 
-        // 1. IDEMPOTENCY CHECK: если ключ уже обработан — вернуть существующий перевод
-        val existingTransfer = transferRepository.findByIdempotencyKey(command.idempotencyKey)
-        if (existingTransfer != null) {
-            log.info("Idempotency hit: key=${command.idempotencyKey}, transferId=${existingTransfer.id}")
-            return Pair(existingTransfer, false)
+        return distributedLockService.executeWithLock(lockKey) {
+            // 1. IDEMPOTENCY CHECK: если ключ уже обработан — вернуть существующий перевод
+            val existingTransfer = transferRepository.findByIdempotencyKey(command.idempotencyKey)
+            if (existingTransfer != null) {
+                log.info("Idempotency hit: key=${command.idempotencyKey}, transferId=${existingTransfer.id}")
+                return@executeWithLock Pair(existingTransfer, false)
+            }
+
+            // 2. BUSINESS VALIDATION
+            validateTransfer(command)
+
+            // 3. LOOKUP RECIPIENT (проверяем существование и принадлежность отправителю)
+            val recipient = recipientRepository.findRecipientById(command.recipientId)
+                ?: throw RecipientNotFoundException(command.recipientId)
+
+            if (recipient.senderId != command.senderId) {
+                throw RecipientNotFoundException(command.recipientId) // не раскрываем чужие данные
+            }
+
+            // 4. RESOLVE DELIVERY METHOD
+            val deliveryMethod = DeliveryMethod.fromString(command.deliveryMethod)
+
+            // 5. CREATE TRANSFER ENTITY
+            // В MVP: receive_amount, exchange_rate, fee — заглушки.
+            // В Sprint 2: gRPC вызов к Pricing Service для валидации quote и получения актуальных данных.
+            val transfer = Transfer(
+                idempotencyKey = command.idempotencyKey,
+                senderId = command.senderId,
+                quoteId = command.quoteId,
+                sendAmount = command.sendAmount,
+                sendCurrency = command.sendCurrency,
+                receiveAmount = command.sendAmount, // TODO Sprint 2: из Pricing quote
+                receiveCurrency = command.receiveCurrency,
+                exchangeRate = BigDecimal.ONE,      // TODO Sprint 2: из Pricing quote
+                feeAmount = BigDecimal.ZERO,        // TODO Sprint 2: из Pricing quote
+                feeCurrency = command.sendCurrency,
+                sourceCountry = command.sourceCountry,
+                destCountry = command.destCountry,
+                deliveryMethod = deliveryMethod,
+                recipientId = command.recipientId,
+                status = TransferStatus.Created
+            )
+
+            // 6. CREATE OUTBOX EVENT (в той же транзакции!)
+            val outboxPayload = buildTransferCreatedPayload(transfer, recipient)
+            val outboxEvent = OutboxEvent(
+                entityId = transfer.id,
+                entityType = "TRANSFER",
+                eventType = OutboxEventType.TRANSFER_CREATED,
+                payload = outboxPayload,
+                status = OutboxEventStatus.PENDING
+            )
+
+            // 7. SAVE BOTH в одной транзакции (@Transactional на методе)
+            val savedTransfer = transferRepository.save(transfer)
+            outboxEventRepository.save(outboxEvent)
+
+            log.info(
+                "Transfer created: id={}, sender={}, corridor={}→{}, amount={} {}, idempotencyKey={}",
+                savedTransfer.id, savedTransfer.senderId,
+                savedTransfer.sourceCountry, savedTransfer.destCountry,
+                savedTransfer.sendAmount, savedTransfer.sendCurrency,
+                savedTransfer.idempotencyKey
+            )
+
+            Pair(savedTransfer, true)
         }
-
-        // 2. BUSINESS VALIDATION
-        validateTransfer(command)
-
-        // 3. LOOKUP RECIPIENT (проверяем существование и принадлежность отправителю)
-        val recipient = recipientRepository.findRecipientById(command.recipientId)
-            ?: throw RecipientNotFoundException(command.recipientId)
-
-        if (recipient.senderId != command.senderId) {
-            throw RecipientNotFoundException(command.recipientId) // не раскрываем чужие данные
-        }
-
-        // 4. RESOLVE DELIVERY METHOD
-        val deliveryMethod = DeliveryMethod.fromString(command.deliveryMethod)
-
-        // 5. CREATE TRANSFER ENTITY
-        // В MVP: receive_amount, exchange_rate, fee — заглушки.
-        // В Sprint 2: gRPC вызов к Pricing Service для валидации quote и получения актуальных данных.
-        val transfer = Transfer(
-            idempotencyKey = command.idempotencyKey,
-            senderId = command.senderId,
-            quoteId = command.quoteId,
-            sendAmount = command.sendAmount,
-            sendCurrency = command.sendCurrency,
-            receiveAmount = command.sendAmount, // TODO Sprint 2: из Pricing quote
-            receiveCurrency = command.receiveCurrency,
-            exchangeRate = BigDecimal.ONE,      // TODO Sprint 2: из Pricing quote
-            feeAmount = BigDecimal.ZERO,        // TODO Sprint 2: из Pricing quote
-            feeCurrency = command.sendCurrency,
-            sourceCountry = command.sourceCountry,
-            destCountry = command.destCountry,
-            deliveryMethod = deliveryMethod,
-            recipientId = command.recipientId,
-            status = TransferStatus.Created
-        )
-
-        // 6. CREATE OUTBOX EVENT (в той же транзакции!)
-        val outboxPayload = buildTransferCreatedPayload(transfer, recipient)
-        val outboxEvent = OutboxEvent(
-            entityId = transfer.id,
-            entityType = "TRANSFER",
-            eventType = OutboxEventType.TRANSFER_CREATED,
-            payload = outboxPayload,
-            status = OutboxEventStatus.PENDING
-        )
-
-        // 7. SAVE BOTH в одной транзакции (@Transactional на методе)
-        val savedTransfer = transferRepository.save(transfer)
-        outboxEventRepository.save(outboxEvent)
-
-        log.info(
-            "Transfer created: id={}, sender={}, corridor={}→{}, amount={} {}, idempotencyKey={}",
-            savedTransfer.id, savedTransfer.senderId,
-            savedTransfer.sourceCountry, savedTransfer.destCountry,
-            savedTransfer.sendAmount, savedTransfer.sendCurrency,
-            savedTransfer.idempotencyKey
-        )
-
-        return Pair(savedTransfer, true)
     }
 
     /**

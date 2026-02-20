@@ -7,6 +7,8 @@ import com.swiftpay.transfer.domain.model.*
 import com.swiftpay.transfer.domain.vo.DeliveryMethod
 import com.swiftpay.transfer.domain.vo.OutboxEventStatus
 import com.swiftpay.transfer.exception.*
+import com.swiftpay.transfer.lock.ConsulLockProperties
+import com.swiftpay.transfer.lock.DistributedLockService
 import com.swiftpay.transfer.repository.*
 import com.swiftpay.transfer.service.dto.CreateTransferCommand
 import io.mockk.*
@@ -31,6 +33,8 @@ class TransferServiceTest {
     private val outboxEventRepository: OutboxEventRepository = mockk()
     private val recipientRepository: RecipientRepository = mockk()
     private val idempotencyKeyRepository: IdempotencyKeyRepository = mockk()
+    private val distributedLockService: DistributedLockService = mockk()
+    private val consulLockProperties = ConsulLockProperties()
 
     private val objectMapper = ObjectMapper().apply {
         registerKotlinModule()
@@ -73,12 +77,19 @@ class TransferServiceTest {
 
     @BeforeEach
     fun setUp() {
+        every { distributedLockService.executeWithLock(any(), any<() -> Any>()) } answers {
+            val action = secondArg<() -> Any>()
+            action()
+        }
+
         transferService = TransferService(
             transferRepository = transferRepository,
             outboxEventRepository = outboxEventRepository,
             recipientRepository = recipientRepository,
             idempotencyKeyRepository = idempotencyKeyRepository,
-            objectMapper = objectMapper
+            objectMapper = objectMapper,
+            distributedLockService = distributedLockService,
+            consulLockProperties = consulLockProperties
         )
     }
 

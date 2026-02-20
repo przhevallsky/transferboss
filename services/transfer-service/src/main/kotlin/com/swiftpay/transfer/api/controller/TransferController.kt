@@ -9,8 +9,16 @@ import com.swiftpay.transfer.api.mapper.TransferMapper.toResponse
 import com.swiftpay.transfer.repository.RecipientRepository
 import com.swiftpay.transfer.service.TransferCacheService
 import com.swiftpay.transfer.service.TransferService
+import io.swagger.v3.oas.annotations.Operation
+import io.swagger.v3.oas.annotations.Parameter
+import io.swagger.v3.oas.annotations.media.Content
+import io.swagger.v3.oas.annotations.media.Schema
+import io.swagger.v3.oas.annotations.responses.ApiResponse
+import io.swagger.v3.oas.annotations.responses.ApiResponses
+import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import org.slf4j.LoggerFactory
+import org.springframework.http.ProblemDetail
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import java.net.URI
@@ -18,6 +26,7 @@ import java.util.UUID
 
 @RestController
 @RequestMapping("/api/v1/transfers")
+@Tag(name = "Transfers", description = "Money transfer operations")
 class TransferController(
     private val transferService: TransferService,
     private val recipientRepository: RecipientRepository,
@@ -25,24 +34,25 @@ class TransferController(
 ) {
     private val log = LoggerFactory.getLogger(TransferController::class.java)
 
-    /**
-     * POST /api/v1/transfers — создание перевода.
-     *
-     * Headers:
-     *   X-Idempotency-Key: UUID (required) — защита от дублирования
-     *
-     * Returns:
-     *   201 Created + Location header — перевод создан
-     *   200 OK — idempotency hit (тот же ключ, возвращаем cached result)
-     *   400 — validation error
-     *   422 — business rule violation
-     */
+    @Operation(
+        summary = "Create a new transfer",
+        description = "Creates a money transfer. Requires X-Idempotency-Key header for duplicate protection."
+    )
+    @ApiResponses(
+        ApiResponse(responseCode = "201", description = "Transfer created"),
+        ApiResponse(responseCode = "200", description = "Idempotent request — returning cached result"),
+        ApiResponse(responseCode = "400", description = "Validation error",
+            content = [Content(schema = Schema(implementation = ProblemDetail::class))]),
+        ApiResponse(responseCode = "422", description = "Business rule violation",
+            content = [Content(schema = Schema(implementation = ProblemDetail::class))])
+    )
     @PostMapping
     fun createTransfer(
         @Valid @RequestBody request: CreateTransferRequest,
+        @Parameter(description = "Unique idempotency key (UUID)", required = true)
         @RequestHeader("X-Idempotency-Key") idempotencyKey: UUID,
+        @Parameter(description = "Sender ID (temporary, will be from JWT)", required = false)
         @RequestHeader("X-Sender-Id", required = false) senderIdHeader: UUID?
-        // TODO Sprint 5: заменить X-Sender-Id на извлечение из JWT token
     ): ResponseEntity<TransferResponse> {
 
         val senderId = senderIdHeader ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
@@ -64,10 +74,12 @@ class TransferController(
         }
     }
 
-    /**
-     * GET /api/v1/transfers/{id} — получить перевод по ID.
-     * Cache-Aside: Redis → PostgreSQL → Redis.
-     */
+    @Operation(summary = "Get transfer by ID")
+    @ApiResponses(
+        ApiResponse(responseCode = "200", description = "Transfer found"),
+        ApiResponse(responseCode = "404", description = "Transfer not found",
+            content = [Content(schema = Schema(implementation = ProblemDetail::class))])
+    )
     @GetMapping("/{id}")
     fun getTransfer(@PathVariable id: UUID): ResponseEntity<TransferResponse> {
 
@@ -85,13 +97,14 @@ class TransferController(
         return ResponseEntity.ok(response)
     }
 
-    /**
-     * GET /api/v1/transfers — список переводов с cursor-based pagination.
-     */
+    @Operation(summary = "List transfers with cursor-based pagination")
     @GetMapping
     fun listTransfers(
+        @Parameter(description = "Sender ID")
         @RequestHeader("X-Sender-Id", required = false) senderIdHeader: UUID?,
+        @Parameter(description = "Opaque cursor from previous response")
         @RequestParam(required = false) cursor: String?,
+        @Parameter(description = "Page size (1-100, default 20)")
         @RequestParam(defaultValue = "20") limit: Int
     ): ResponseEntity<PaginatedResponse<TransferResponse>> {
 

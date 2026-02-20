@@ -42,6 +42,9 @@ dependencies {
     implementation(libs.flyway.postgres)
     runtimeOnly(libs.postgresql)
 
+    // API Documentation
+    implementation(libs.springdoc.openapi.ui)
+
     // Observability
     implementation(libs.logstash.logback)
     implementation(libs.micrometer.prometheus)

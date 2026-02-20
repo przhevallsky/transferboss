@@ -7,6 +7,7 @@ import com.swiftpay.transfer.api.dto.response.TransferResponse
 import com.swiftpay.transfer.api.mapper.TransferMapper.toCommand
 import com.swiftpay.transfer.api.mapper.TransferMapper.toResponse
 import com.swiftpay.transfer.repository.RecipientRepository
+import com.swiftpay.transfer.service.TransferCacheService
 import com.swiftpay.transfer.service.TransferService
 import jakarta.validation.Valid
 import org.slf4j.LoggerFactory
@@ -19,7 +20,8 @@ import java.util.UUID
 @RequestMapping("/api/v1/transfers")
 class TransferController(
     private val transferService: TransferService,
-    private val recipientRepository: RecipientRepository
+    private val recipientRepository: RecipientRepository,
+    private val transferCacheService: TransferCacheService
 ) {
     private val log = LoggerFactory.getLogger(TransferController::class.java)
 
@@ -64,14 +66,23 @@ class TransferController(
 
     /**
      * GET /api/v1/transfers/{id} — получить перевод по ID.
+     * Cache-Aside: Redis → PostgreSQL → Redis.
      */
     @GetMapping("/{id}")
-    fun getTransfer(
-        @PathVariable id: UUID
-    ): ResponseEntity<TransferResponse> {
+    fun getTransfer(@PathVariable id: UUID): ResponseEntity<TransferResponse> {
+
+        val cached = transferCacheService.getCached(id)
+        if (cached != null) {
+            return ResponseEntity.ok(cached)
+        }
+
         val transfer = transferService.getTransfer(id)
         val recipient = recipientRepository.findRecipientById(transfer.recipientId)
-        return ResponseEntity.ok(transfer.toResponse(recipient))
+        val response = transfer.toResponse(recipient)
+
+        transferCacheService.put(id, response)
+
+        return ResponseEntity.ok(response)
     }
 
     /**

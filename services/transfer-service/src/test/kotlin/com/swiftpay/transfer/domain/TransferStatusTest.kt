@@ -34,22 +34,20 @@ class TransferStatusTest {
 
     @Test
     fun `COMPLETED cannot transition to any status`() {
-        TransferStatus.ALL.forEach { status ->
-            assertFalse(
-                TransferStatus.Completed.canTransitionTo(status),
-                "COMPLETED should not transition to ${status.value}"
-            )
-        }
+        assertTrue(TransferStatus.Completed.isTerminal())
+        assertTrue(TransferStatus.Completed.allowedTransitions().isEmpty())
+        assertFalse(TransferStatus.Completed.canTransitionTo(TransferStatus.Created))
+        assertFalse(TransferStatus.Completed.canTransitionTo(TransferStatus.Failed))
+        assertFalse(TransferStatus.Completed.canTransitionTo(TransferStatus.Cancelled))
     }
 
     @Test
     fun `CANCELLED cannot transition to any status`() {
-        TransferStatus.ALL.forEach { status ->
-            assertFalse(
-                TransferStatus.Cancelled.canTransitionTo(status),
-                "CANCELLED should not transition to ${status.value}"
-            )
-        }
+        assertTrue(TransferStatus.Cancelled.isTerminal())
+        assertTrue(TransferStatus.Cancelled.allowedTransitions().isEmpty())
+        assertFalse(TransferStatus.Cancelled.canTransitionTo(TransferStatus.Created))
+        assertFalse(TransferStatus.Cancelled.canTransitionTo(TransferStatus.Completed))
+        assertFalse(TransferStatus.Cancelled.canTransitionTo(TransferStatus.RefundPending))
     }
 
     @Test

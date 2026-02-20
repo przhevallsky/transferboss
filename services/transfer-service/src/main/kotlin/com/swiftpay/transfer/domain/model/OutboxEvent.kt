@@ -3,6 +3,8 @@ package com.swiftpay.transfer.domain.model
 import com.swiftpay.transfer.domain.vo.OutboxEventStatus
 import com.swiftpay.transfer.domain.vo.OutboxEventType
 import jakarta.persistence.*
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import java.time.Instant
 import java.util.UUID
 
@@ -37,6 +39,7 @@ class OutboxEvent(
 
     /** JSON payload события (JSONB в PostgreSQL) */
     @Column(name = "payload", nullable = false, columnDefinition = "jsonb")
+    @JdbcTypeCode(SqlTypes.JSON)
     val payload: String,
 
     /** Статус обработки */

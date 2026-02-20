@@ -3,6 +3,8 @@ package com.swiftpay.transfer.api.error
 import com.swiftpay.transfer.exception.BusinessException
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
+import org.springframework.core.Ordered
+import org.springframework.core.annotation.Order
 import org.springframework.http.HttpStatus
 import org.springframework.http.ProblemDetail
 import org.springframework.http.ResponseEntity
@@ -16,6 +18,7 @@ import java.net.URI
 import java.time.Instant
 
 @RestControllerAdvice
+@Order(Ordered.HIGHEST_PRECEDENCE)
 class GlobalExceptionHandler {
 
     private val log = LoggerFactory.getLogger(GlobalExceptionHandler::class.java)

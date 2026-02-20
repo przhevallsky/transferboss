@@ -1,0 +1,26 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    serialization:
+      write-dates-as-timestamps: false
+
+  mvc:
+    problemdetails:
+      enabled: true
+
+  flyway:
+    enabled: true
+
+logging:
+  level:
+    com.swiftpay: DEBUG
+    org.springframework.web: INFO
+    org.hibernate.SQL: DEBUG

@@ -3,11 +3,12 @@
 -- ================================================
 
 -- Тестовый получатель
-INSERT INTO recipients (id, sender_id, first_name, last_name, country, created_at, updated_at)
+INSERT INTO recipients (id, sender_id, first_name, last_name, country, delivery_details, created_at, updated_at)
 VALUES (
     '11111111-1111-1111-1111-111111111111',
     '00000000-0000-0000-0000-000000000001',
     'Maria', 'Santos', 'PH',
+    '{"bank_name": "BDO", "account_number": "1234567890", "branch_code": "001"}'::jsonb,
     now(), now()
 ) ON CONFLICT (id) DO NOTHING;
 

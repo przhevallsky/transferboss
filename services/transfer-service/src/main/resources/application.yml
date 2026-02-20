@@ -59,6 +59,10 @@ spring:
         health-check-path: /actuator/health
         health-check-interval: 10s
 
+  mvc:
+    problemdetails:
+      enabled: true
+
   jackson:
     property-naming-strategy: SNAKE_CASE
     serialization:

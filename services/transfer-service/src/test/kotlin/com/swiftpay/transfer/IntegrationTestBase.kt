@@ -4,6 +4,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.testcontainers.containers.GenericContainer
 import org.testcontainers.postgresql.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
@@ -22,21 +23,25 @@ abstract class IntegrationTestBase {
                 .withUsername("test")
                 .withPassword("test")
 
+        @Container
+        @JvmStatic
+        val redis = GenericContainer("redis:7-alpine").apply {
+            withExposedPorts(6379)
+        }
+
         @DynamicPropertySource
         @JvmStatic
         fun configureProperties(registry: DynamicPropertyRegistry) {
+            // PostgreSQL
             registry.add("spring.datasource.url", postgres::getJdbcUrl)
             registry.add("spring.datasource.username", postgres::getUsername)
             registry.add("spring.datasource.password", postgres::getPassword)
 
-            // Disable Redis health check — no Redis container in base tests
-            registry.add("management.health.redis.enabled") { "false" }
+            // Redis
+            registry.add("spring.data.redis.host") { redis.host }
+            registry.add("spring.data.redis.port") { redis.firstMappedPort }
 
-            // Disable Redis auto-configuration in tests
-            registry.add("spring.data.redis.host") { "localhost" }
-            registry.add("spring.data.redis.port") { "16379" }
-
-            // Disable Kafka in base integration tests
+            // Disable Kafka in integration tests
             registry.add("spring.kafka.bootstrap-servers") { "localhost:19092" }
 
             // Disable Consul

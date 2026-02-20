@@ -85,6 +85,16 @@ management:
     tags:
       application: ${spring.application.name}
 
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui
+    tags-sorter: alpha
+    operations-sorter: method
+  default-produces-media-type: application/json
+  default-consumes-media-type: application/json
+
 logging:
   level:
     com.swiftpay: DEBUG

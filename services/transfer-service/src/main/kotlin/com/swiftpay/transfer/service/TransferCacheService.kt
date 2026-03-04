@@ -48,13 +48,4 @@ class TransferCacheService(
         }
     }
 
-    fun evict(transferId: UUID) {
-        try {
-            val key = "$KEY_PREFIX$transferId"
-            val deleted = redisTemplate.delete(key)
-            log.debug("Cache EVICT: transferId={}, deleted={}", transferId, deleted)
-        } catch (e: Exception) {
-            log.warn("Redis DELETE failed for transferId={}: {}", transferId, e.message)
-        }
-    }
 }

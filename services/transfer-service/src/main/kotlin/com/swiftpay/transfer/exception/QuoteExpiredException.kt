@@ -1,10 +1,11 @@
 package com.swiftpay.transfer.exception
 
-import java.util.UUID
-
-class QuoteExpiredException(quoteId: UUID) : BusinessException(
+class QuoteExpiredException(
+    quoteId: String,
+    reason: String? = null
+) : BusinessException(
     errorType = "https://api.transferhub.com/errors/quote-expired",
     title = "Quote Expired",
-    statusCode = 422,
-    message = "Quote $quoteId has expired. Please request a new quote."
+    statusCode = 409,
+    message = "Quote $quoteId is invalid: ${reason ?: "expired or not found"}"
 )

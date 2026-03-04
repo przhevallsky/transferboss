@@ -21,6 +21,8 @@ protobuf            = "3.25.3"
 protobuf-plugin     = "0.9.4"
 # MongoDB
 mongodb-driver      = "5.2.1"
+# Resilience4j
+resilience4j        = "2.2.0"
 # Redis
 lettuce             = "6.4.0.RELEASE"
 # Micrometer (version managed by Spring BOM for Spring services)
@@ -46,13 +48,10 @@ jackson-datatype-jsr310         = { module = "com.fasterxml.jackson.datatype:jac
 flyway-core                     = { module = "org.flywaydb:flyway-core",                  version.ref = "flyway" }
 flyway-postgres                 = { module = "org.flywaydb:flyway-database-postgresql",   version.ref = "flyway" }
 postgresql                      = { module = "org.postgresql:postgresql" }
-postgresql-driver               = { module = "org.postgresql:postgresql" }
 
 # ── Observability ────────────────────────────────────────
 logstash-logback                = { module = "net.logstash.logback:logstash-logback-encoder", version = "7.4" }
-logback-logstash-encoder        = { module = "net.logstash.logback:logstash-logback-encoder", version = "7.4" }
-micrometer-prometheus           = { module = "io.micrometer:micrometer-registry-prometheus" }
-micrometer-registry-prometheus  = { module = "io.micrometer:micrometer-registry-prometheus", version.ref = "micrometer" }
+micrometer-prometheus           = { module = "io.micrometer:micrometer-registry-prometheus", version.ref = "micrometer" }
 
 # ── Ktor Server ──────────────────────────────────────────
 ktor-server-core                = { module = "io.ktor:ktor-server-core-jvm",                    version.ref = "ktor" }
@@ -82,6 +81,9 @@ protobuf-java-util              = { module = "com.google.protobuf:protobuf-java-
 
 # ── MongoDB ──────────────────────────────────────────────
 mongodb-driver-kotlin-coroutine = { module = "org.mongodb:mongodb-driver-kotlin-coroutine", version.ref = "mongodb-driver" }
+
+# ── Resilience4j ────────────────────────────────────────────
+resilience4j-circuitbreaker     = { module = "io.github.resilience4j:resilience4j-circuitbreaker", version.ref = "resilience4j" }
 
 # ── Redis ────────────────────────────────────────────────
 lettuce-core                    = { module = "io.lettuce:lettuce-core",                  version.ref = "lettuce" }

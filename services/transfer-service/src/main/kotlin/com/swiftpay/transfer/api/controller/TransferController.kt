@@ -6,7 +6,6 @@ import com.swiftpay.transfer.api.dto.response.PaginationMeta
 import com.swiftpay.transfer.api.dto.response.TransferResponse
 import com.swiftpay.transfer.api.mapper.TransferMapper.toCommand
 import com.swiftpay.transfer.api.mapper.TransferMapper.toResponse
-import com.swiftpay.transfer.repository.RecipientRepository
 import com.swiftpay.transfer.service.TransferCacheService
 import com.swiftpay.transfer.service.TransferService
 import io.swagger.v3.oas.annotations.Operation
@@ -29,7 +28,6 @@ import java.util.UUID
 @Tag(name = "Transfers", description = "Money transfer operations")
 class TransferController(
     private val transferService: TransferService,
-    private val recipientRepository: RecipientRepository,
     private val transferCacheService: TransferCacheService
 ) {
     private val log = LoggerFactory.getLogger(TransferController::class.java)
@@ -58,18 +56,17 @@ class TransferController(
         val senderId = senderIdHeader ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
 
         val command = request.toCommand(senderId = senderId, idempotencyKey = idempotencyKey)
-        val (transfer, isNew) = transferService.createTransfer(command)
+        val (result, isNew) = transferService.createTransfer(command)
 
-        val recipient = recipientRepository.findRecipientById(transfer.recipientId)
-        val response = transfer.toResponse(recipient)
+        val response = result.transfer.toResponse(result.recipient)
 
         return if (isNew) {
-            log.info("Transfer created: id={}", transfer.id)
+            log.info("Transfer created: id={}", result.transfer.id)
             ResponseEntity
-                .created(URI.create("/api/v1/transfers/${transfer.id}"))
+                .created(URI.create("/api/v1/transfers/${result.transfer.id}"))
                 .body(response)
         } else {
-            log.info("Idempotency hit: key={}, transferId={}", idempotencyKey, transfer.id)
+            log.info("Idempotency hit: key={}, transferId={}", idempotencyKey, result.transfer.id)
             ResponseEntity.ok(response)
         }
     }
@@ -88,9 +85,8 @@ class TransferController(
             return ResponseEntity.ok(cached)
         }
 
-        val transfer = transferService.getTransfer(id)
-        val recipient = recipientRepository.findRecipientById(transfer.recipientId)
-        val response = transfer.toResponse(recipient)
+        val result = transferService.getTransfer(id)
+        val response = result.transfer.toResponse(result.recipient)
 
         transferCacheService.put(id, response)
 
@@ -113,12 +109,9 @@ class TransferController(
         }
 
         val senderId = senderIdHeader ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
-        val (transfers, nextCursor) = transferService.listTransfers(senderId, cursor, limit)
+        val (results, nextCursor) = transferService.listTransfers(senderId, cursor, limit)
 
-        val items = transfers.map { transfer ->
-            val recipient = recipientRepository.findRecipientById(transfer.recipientId)
-            transfer.toResponse(recipient)
-        }
+        val items = results.map { it.transfer.toResponse(it.recipient) }
 
         return ResponseEntity.ok(
             PaginatedResponse(

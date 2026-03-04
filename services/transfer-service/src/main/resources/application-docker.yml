@@ -12,3 +12,7 @@ spring:
   cloud:
     consul:
       host: transferhub-consul
+
+grpc:
+  pricing:
+    host: pricing-service

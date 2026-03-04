@@ -25,8 +25,9 @@ class OutboxPublisher(
         grouped.forEach { (entityId, entityEvents) ->
             entityEvents.forEach { event ->
                 try {
+                    val topic = event.targetTopic ?: properties.targetTopic
                     val result = kafkaTemplate.send(
-                        properties.targetTopic,
+                        topic,
                         entityId.toString(),
                         event.payload
                     ).get()

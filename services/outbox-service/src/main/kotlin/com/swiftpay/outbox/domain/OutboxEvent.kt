@@ -39,6 +39,9 @@ class OutboxEvent(
     @Column(name = "processed_at")
     var processedAt: Instant? = null,
 
+    @Column(name = "target_topic", length = 200)
+    val targetTopic: String? = null,
+
     @Column(name = "kafka_topic", length = 200)
     var kafkaTopic: String? = null,
 

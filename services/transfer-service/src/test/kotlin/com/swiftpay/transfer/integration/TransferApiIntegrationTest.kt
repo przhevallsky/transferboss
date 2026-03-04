@@ -87,7 +87,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
         assertNotNull(response.headers.location)
 
         val responseBody = response.body!!
-        assertEquals("CREATED", responseBody["status"])
+        assertEquals("PAYMENT_PENDING", responseBody["status"])
         assertEquals("200.00", responseBody["send_amount"])
         assertEquals("USD", responseBody["send_currency"])
         assertNotNull(responseBody["id"])
@@ -98,10 +98,11 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
         assertNotNull(savedTransfer)
         assertEquals(BigDecimal("200.00").setScale(2), savedTransfer!!.sendAmount.setScale(2))
 
-        // Verify outbox event
+        // Verify outbox events (TRANSFER_CREATED + PAYMENT_REQUESTED)
         val outboxEvents = outboxEventRepository.findByEntityIdOrderByCreatedAtAsc(transferId)
-        assertEquals(1, outboxEvents.size)
+        assertEquals(2, outboxEvents.size)
         assertEquals(OutboxEventStatus.PENDING, outboxEvents[0].status)
+        assertEquals(OutboxEventStatus.PENDING, outboxEvents[1].status)
     }
 
     // ================================================================

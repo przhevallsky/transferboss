@@ -38,7 +38,7 @@ sealed class TransferStatus(val value: String) {
      * Если статус терминальный (COMPLETED, REFUNDED, etc.) — пустой set.
      */
     fun allowedTransitions(): Set<TransferStatus> = when (this) {
-        Created -> setOf(ComplianceCheck, Cancelled)
+        Created -> setOf(ComplianceCheck, PaymentPending, Cancelled)
         ComplianceCheck -> setOf(ComplianceHold, PaymentPending, ComplianceRejected)
         ComplianceHold -> setOf(PaymentPending, ComplianceRejected)
         PaymentPending -> setOf(PaymentCaptured, PaymentFailed)

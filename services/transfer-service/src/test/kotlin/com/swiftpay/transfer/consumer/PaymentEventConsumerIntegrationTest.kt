@@ -51,7 +51,7 @@ class PaymentEventConsumerIntegrationTest : IntegrationTestBase() {
             }
         """.trimIndent()
 
-        kafkaTemplate.send("payment.events", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
+        kafkaTemplate.send("payments.payment.captured", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
 
         awaitCondition {
             val updated = transferRepository.findTransferById(transfer.id)
@@ -79,7 +79,7 @@ class PaymentEventConsumerIntegrationTest : IntegrationTestBase() {
             }
         """.trimIndent()
 
-        kafkaTemplate.send("payment.events", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
+        kafkaTemplate.send("payments.payment.failed", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
 
         awaitCondition {
             val updated = transferRepository.findTransferById(transfer.id)
@@ -108,14 +108,14 @@ class PaymentEventConsumerIntegrationTest : IntegrationTestBase() {
         """.trimIndent()
 
         // Send the same event twice
-        kafkaTemplate.send("payment.events", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
+        kafkaTemplate.send("payments.payment.captured", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
 
         awaitCondition {
             val updated = transferRepository.findTransferById(transfer.id)
             updated?.status == TransferStatus.PaymentCaptured
         }
 
-        kafkaTemplate.send("payment.events", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
+        kafkaTemplate.send("payments.payment.captured", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
 
         // Wait a bit for the second event to be processed (or skipped)
         Thread.sleep(2000)
@@ -128,7 +128,7 @@ class PaymentEventConsumerIntegrationTest : IntegrationTestBase() {
         val consumedEvent = consumedEventRepository.findById(eventId)
         assertTrue(consumedEvent.isPresent)
         assertEquals("transfer-service", consumedEvent.get().consumerGroup)
-        assertEquals("payment.events", consumedEvent.get().topic)
+        assertEquals("payments.payment.captured", consumedEvent.get().topic)
     }
 
     private fun createTransferWithStatus(status: TransferStatus): Transfer {

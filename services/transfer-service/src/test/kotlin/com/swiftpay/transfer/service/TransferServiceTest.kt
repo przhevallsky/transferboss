@@ -121,7 +121,7 @@ class TransferServiceTest {
             val (result, isNew) = transferService.createTransfer(validCommand())
 
             assertTrue(isNew)
-            assertEquals(TransferStatus.Created, result.transfer.status)
+            assertEquals(TransferStatus.PaymentPending, result.transfer.status)
             assertEquals(senderId, result.transfer.senderId)
             assertEquals(BigDecimal("200.00"), result.transfer.sendAmount)
             assertEquals("USD", result.transfer.sendCurrency)
@@ -135,15 +135,15 @@ class TransferServiceTest {
             assertEquals(BigDecimal("5.99"), result.transfer.feeAmount)
             assertEquals("USD", result.transfer.feeCurrency)
 
-            verify(exactly = 1) { transferRepository.save(any()) }
-            verify(exactly = 1) { outboxEventRepository.save(match { event ->
+            verify(exactly = 2) { transferRepository.save(any()) }
+            verify(exactly = 2) { outboxEventRepository.save(match { event ->
                 event.entityType == "TRANSFER" &&
                 event.status == OutboxEventStatus.PENDING
             }) }
         }
 
         @Test
-        fun `should set transfer status to CREATED`() {
+        fun `should set transfer status to PAYMENT_PENDING`() {
             every { transferRepository.findByIdempotencyKey(idempotencyKey) } returns null
             every { recipientRepository.findRecipientById(recipientId) } returns testRecipient
             every { transferRepository.save(any()) } answers { firstArg() }
@@ -151,7 +151,7 @@ class TransferServiceTest {
 
             val (result, _) = transferService.createTransfer(validCommand())
 
-            assertEquals(TransferStatus.Created, result.transfer.status)
+            assertEquals(TransferStatus.PaymentPending, result.transfer.status)
         }
 
         @Test
@@ -167,26 +167,35 @@ class TransferServiceTest {
         }
 
         @Test
-        fun `should generate outbox event with correct payload`() {
+        fun `should generate outbox events with correct payloads`() {
             every { transferRepository.findByIdempotencyKey(idempotencyKey) } returns null
             every { recipientRepository.findRecipientById(recipientId) } returns testRecipient
             every { transferRepository.save(any()) } answers { firstArg() }
 
-            val capturedEvent = slot<OutboxEvent>()
-            every { outboxEventRepository.save(capture(capturedEvent)) } answers { firstArg() }
+            val capturedEvents = mutableListOf<OutboxEvent>()
+            every { outboxEventRepository.save(capture(capturedEvents)) } answers { firstArg() }
 
             transferService.createTransfer(validCommand())
 
-            val event = capturedEvent.captured
-            assertNotNull(event.payload)
+            assertEquals(2, capturedEvents.size)
 
-            val payload = objectMapper.readTree(event.payload)
-            assertEquals("USD", payload.get("send_currency").asText())
-            assertEquals("200.00", payload.get("send_amount").asText())
-            assertEquals("10907.72", payload.get("receive_amount").asText())
-            assertEquals("56.20", payload.get("exchange_rate").asText())
-            assertEquals("5.99", payload.get("fee_amount").asText())
-            assertNotNull(payload.get("event_id"))
+            // First event: TRANSFER_CREATED
+            val createdEvent = capturedEvents[0]
+            val createdPayload = objectMapper.readTree(createdEvent.payload)
+            assertEquals("USD", createdPayload.get("send_currency").asText())
+            assertEquals("200.00", createdPayload.get("send_amount").asText())
+            assertEquals("10907.72", createdPayload.get("receive_amount").asText())
+            assertEquals("56.20", createdPayload.get("exchange_rate").asText())
+            assertEquals("5.99", createdPayload.get("fee_amount").asText())
+            assertNotNull(createdPayload.get("event_id"))
+
+            // Second event: PAYMENT_REQUESTED with target topic
+            val paymentEvent = capturedEvents[1]
+            assertEquals("transfers.payment.requested", paymentEvent.targetTopic)
+            val paymentPayload = objectMapper.readTree(paymentEvent.payload)
+            assertEquals("PAYMENT_REQUESTED", paymentPayload.get("event_type").asText())
+            assertNotNull(paymentPayload.get("transfer_id"))
+            assertNotNull(paymentPayload.get("idempotency_key"))
         }
 
         @Test

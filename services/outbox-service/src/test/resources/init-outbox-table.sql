@@ -11,6 +11,7 @@ CREATE TABLE outbox (
     status          VARCHAR(20)     NOT NULL DEFAULT 'PENDING',
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
     processed_at    TIMESTAMPTZ,
+    target_topic    VARCHAR(200),
     kafka_topic     VARCHAR(200),
     kafka_offset    BIGINT,
 

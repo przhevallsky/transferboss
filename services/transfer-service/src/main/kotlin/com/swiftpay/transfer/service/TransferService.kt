@@ -131,11 +131,27 @@ class TransferService(
             val savedTransfer = transferRepository.save(transfer)
             outboxEventRepository.save(outboxEvent)
 
+            // 9. PAYMENT REQUEST — transition to PAYMENT_PENDING + outbox event for saga
+            val paymentPayload = buildPaymentRequestedPayload(savedTransfer)
+            val paymentOutboxEvent = OutboxEvent(
+                entityId = savedTransfer.id,
+                entityType = "TRANSFER",
+                eventType = OutboxEventType.PAYMENT_REQUESTED,
+                payload = paymentPayload,
+                status = OutboxEventStatus.PENDING,
+                targetTopic = "transfers.payment.requested"
+            )
+            outboxEventRepository.save(paymentOutboxEvent)
+
+            savedTransfer.transitionTo(TransferStatus.PaymentPending)
+            transferRepository.save(savedTransfer)
+
             log.info(
-                "Transfer created: id={}, sender={}, corridor={}→{}, amount={} {}, idempotencyKey={}",
+                "Transfer created: id={}, sender={}, corridor={}→{}, amount={} {}, status={}, idempotencyKey={}",
                 savedTransfer.id, savedTransfer.senderId,
                 savedTransfer.sourceCountry, savedTransfer.destCountry,
                 savedTransfer.sendAmount, savedTransfer.sendCurrency,
+                savedTransfer.status.value,
                 savedTransfer.idempotencyKey
             )
 
@@ -266,6 +282,19 @@ class TransferService(
             "recipient_name" to "${recipient.firstName} ${recipient.lastName}",
             "recipient_country" to recipient.country,
             "created_at" to transfer.createdAt.toString()
+        )
+        return objectMapper.writeValueAsString(payload)
+    }
+
+    private fun buildPaymentRequestedPayload(transfer: Transfer): String {
+        val payload = mapOf(
+            "event_id" to UUID.randomUUID().toString(),
+            "event_type" to "PAYMENT_REQUESTED",
+            "transfer_id" to transfer.id.toString(),
+            "sender_id" to transfer.senderId.toString(),
+            "send_amount" to transfer.sendAmount.toPlainString(),
+            "send_currency" to transfer.sendCurrency,
+            "idempotency_key" to transfer.idempotencyKey.toString()
         )
         return objectMapper.writeValueAsString(payload)
     }

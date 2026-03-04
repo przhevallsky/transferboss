@@ -10,7 +10,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-@EmbeddedKafka(partitions = 1, topics = ["payment.events"])
+@EmbeddedKafka(partitions = 1, topics = ["payments.payment.captured", "payments.payment.failed"])
 abstract class IntegrationTestBase {
 
     companion object {

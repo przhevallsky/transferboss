@@ -105,7 +105,7 @@ class PaymentEventConsumerTest {
             every { transferRepository.save(any()) } answers { firstArg() }
             every { consumedEventRepository.save(any()) } answers { firstArg() }
 
-            consumer.consume(eventJson("PAYMENT_CAPTURED"))
+            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
 
             assertEquals(TransferStatus.PaymentCaptured, transfer.status)
             verify { transferRepository.save(transfer) }
@@ -121,7 +121,7 @@ class PaymentEventConsumerTest {
             every { transferRepository.save(any()) } answers { firstArg() }
             every { consumedEventRepository.save(any()) } answers { firstArg() }
 
-            consumer.consume(eventJson("PAYMENT_CAPTURED"))
+            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
 
             assertEquals(UUID.fromString(paymentId), transfer.paymentId)
         }
@@ -138,7 +138,7 @@ class PaymentEventConsumerTest {
             every { transferRepository.save(any()) } answers { firstArg() }
             every { consumedEventRepository.save(any()) } answers { firstArg() }
 
-            consumer.consume(eventJson("PAYMENT_FAILED", reason = "Insufficient funds"))
+            consumer.consume(eventJson("PAYMENT_FAILED", reason = "Insufficient funds"), "payments.payment.failed")
 
             assertEquals(TransferStatus.PaymentFailed, transfer.status)
             assertEquals("Insufficient funds", transfer.statusReason)
@@ -153,7 +153,7 @@ class PaymentEventConsumerTest {
         fun `should skip processing when event already consumed`() {
             every { consumedEventRepository.existsByEventId(eventId) } returns true
 
-            consumer.consume(eventJson("PAYMENT_CAPTURED"))
+            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
 
             verify(exactly = 0) { transferRepository.findTransferById(any()) }
             verify(exactly = 0) { transferRepository.save(any()) }
@@ -166,7 +166,7 @@ class PaymentEventConsumerTest {
 
         @Test
         fun `should skip unknown event type`() {
-            consumer.consume(eventJson("PAYMENT_REFUNDED"))
+            consumer.consume(eventJson("PAYMENT_REFUNDED"), "payments.payment.captured")
 
             verify(exactly = 0) { transactionTemplate.execute(any<TransactionCallback<Boolean>>()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
@@ -174,7 +174,7 @@ class PaymentEventConsumerTest {
 
         @Test
         fun `should skip invalid transferId format`() {
-            consumer.consume(eventJson("PAYMENT_CAPTURED", transferId = "not-a-uuid"))
+            consumer.consume(eventJson("PAYMENT_CAPTURED", transferId = "not-a-uuid"), "payments.payment.captured")
 
             verify(exactly = 0) { transactionTemplate.execute(any<TransactionCallback<Boolean>>()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
@@ -185,7 +185,7 @@ class PaymentEventConsumerTest {
             every { consumedEventRepository.existsByEventId(eventId) } returns false
             every { transferRepository.findTransferById(transferId) } returns null
 
-            consumer.consume(eventJson("PAYMENT_CAPTURED"))
+            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
 
             verify(exactly = 0) { transferRepository.save(any()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
@@ -193,7 +193,7 @@ class PaymentEventConsumerTest {
 
         @Test
         fun `should handle deserialization failure gracefully`() {
-            consumer.consume("not valid json {{{")
+            consumer.consume("not valid json {{{", "payments.payment.captured")
 
             verify(exactly = 0) { transactionTemplate.execute(any<TransactionCallback<Boolean>>()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
@@ -204,7 +204,7 @@ class PaymentEventConsumerTest {
             every { consumedEventRepository.existsByEventId(eventId) } returns false
             every { transferRepository.findTransferById(transferId) } returns null
 
-            consumer.consume(eventJson("PAYMENT_CAPTURED"))
+            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
 
             verify(exactly = 0) { transferCacheService.evict(any()) }
         }

@@ -9,6 +9,8 @@ import com.swiftpay.transfer.service.TransferCacheService
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.kafka.annotation.KafkaListener
+import org.springframework.kafka.support.KafkaHeaders
+import org.springframework.messaging.handler.annotation.Header
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
@@ -24,8 +26,8 @@ class PaymentEventConsumer(
 
     private val log = LoggerFactory.getLogger(PaymentEventConsumer::class.java)
 
-    @KafkaListener(topics = ["payment.events"], groupId = "transfer-service")
-    fun consume(message: String) {
+    @KafkaListener(topics = ["payments.payment.captured", "payments.payment.failed"], groupId = "transfer-service")
+    fun consume(message: String, @Header(KafkaHeaders.RECEIVED_TOPIC) receivedTopic: String) {
         val event = try {
             objectMapper.readValue(message, PaymentEvent::class.java)
         } catch (e: Exception) {
@@ -78,7 +80,7 @@ class PaymentEventConsumer(
                     ConsumedEvent(
                         eventId = event.eventId,
                         consumerGroup = "transfer-service",
-                        topic = "payment.events"
+                        topic = receivedTopic
                     )
                 )
                 true

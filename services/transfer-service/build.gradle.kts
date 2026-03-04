@@ -1,9 +1,12 @@
+import com.google.protobuf.gradle.*
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.spring)
     alias(libs.plugins.kotlin.jpa)
     alias(libs.plugins.spring.boot)
     alias(libs.plugins.spring.dependency.mgmt)
+    alias(libs.plugins.protobuf)
 }
 
 java {
@@ -16,6 +19,32 @@ dependencyManagement {
     imports {
         mavenBom("org.springframework.cloud:spring-cloud-dependencies:${libs.versions.spring.cloud.get()}")
         mavenBom("org.testcontainers:testcontainers-bom:${libs.versions.testcontainers.get()}")
+    }
+}
+
+// ── Protobuf Code Generation ──────────────────────────────────────────────────
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:${libs.versions.protobuf.asProvider().get()}"
+    }
+    plugins {
+        create("grpc") {
+            artifact = "io.grpc:protoc-gen-grpc-java:${libs.versions.grpc.asProvider().get()}"
+        }
+        create("grpckt") {
+            artifact = "io.grpc:protoc-gen-grpc-kotlin:${libs.versions.grpc.kotlin.get()}:jdk8@jar"
+        }
+    }
+    generateProtoTasks {
+        all().forEach { task ->
+            task.plugins {
+                create("grpc")
+                create("grpckt")
+            }
+            task.builtins {
+                create("kotlin")
+            }
+        }
     }
 }
 
@@ -42,6 +71,16 @@ dependencies {
     implementation(libs.flyway.postgres)
     runtimeOnly(libs.postgresql)
 
+    // gRPC client
+    implementation(libs.grpc.netty)
+    implementation(libs.grpc.protobuf)
+    implementation(libs.grpc.stub)
+    implementation(libs.grpc.kotlin.stub)
+    implementation(libs.protobuf.kotlin)
+
+    // Resilience4j
+    implementation(libs.resilience4j.circuitbreaker)
+
     // API Documentation
     implementation(libs.springdoc.openapi.ui)
 
@@ -59,7 +98,6 @@ dependencies {
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.kafka)
-    testImplementation(libs.testcontainers.mongodb)
 }
 
 tasks.withType<Test> {

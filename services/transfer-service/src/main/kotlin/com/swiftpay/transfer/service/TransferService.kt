@@ -1,15 +1,18 @@
 package com.swiftpay.transfer.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.swiftpay.transfer.client.PricingClient
 import com.swiftpay.transfer.domain.model.*
 import com.swiftpay.transfer.domain.vo.DeliveryMethod
 import com.swiftpay.transfer.domain.vo.OutboxEventStatus
 import com.swiftpay.transfer.domain.vo.OutboxEventType
 import com.swiftpay.transfer.exception.*
-import com.swiftpay.transfer.lock.ConsulLockProperties
 import com.swiftpay.transfer.lock.DistributedLockService
-import com.swiftpay.transfer.repository.*
+import com.swiftpay.transfer.repository.OutboxEventRepository
+import com.swiftpay.transfer.repository.RecipientRepository
+import com.swiftpay.transfer.repository.TransferRepository
 import com.swiftpay.transfer.service.dto.CreateTransferCommand
+import com.swiftpay.transfer.service.dto.TransferWithRecipient
 import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
@@ -24,10 +27,9 @@ class TransferService(
     private val transferRepository: TransferRepository,
     private val outboxEventRepository: OutboxEventRepository,
     private val recipientRepository: RecipientRepository,
-    private val idempotencyKeyRepository: IdempotencyKeyRepository,
     private val objectMapper: ObjectMapper,
     private val distributedLockService: DistributedLockService,
-    private val consulLockProperties: ConsulLockProperties
+    private val pricingClient: PricingClient
 ) {
     private val log = LoggerFactory.getLogger(TransferService::class.java)
 
@@ -55,18 +57,19 @@ class TransferService(
      * Это гарантия Outbox Pattern: событие будет опубликовано в Kafka тогда и только тогда,
      * когда бизнес-данные записаны в БД.
      *
-     * @return Pair<Transfer, Boolean> — (перевод, isNew). isNew=false если idempotency hit.
+     * @return Pair<TransferWithRecipient, Boolean> — (перевод + получатель, isNew). isNew=false если idempotency hit.
      */
     @Transactional
-    fun createTransfer(command: CreateTransferCommand): Pair<Transfer, Boolean> {
-        val lockKey = "idempotency/${command.idempotencyKey}"
+    fun createTransfer(command: CreateTransferCommand): Pair<TransferWithRecipient, Boolean> {
+        val lockKey = "sender/${command.senderId}/create"
 
         return distributedLockService.executeWithLock(lockKey) {
             // 1. IDEMPOTENCY CHECK: если ключ уже обработан — вернуть существующий перевод
             val existingTransfer = transferRepository.findByIdempotencyKey(command.idempotencyKey)
             if (existingTransfer != null) {
                 log.info("Idempotency hit: key=${command.idempotencyKey}, transferId=${existingTransfer.id}")
-                return@executeWithLock Pair(existingTransfer, false)
+                val recipient = recipientRepository.findRecipientById(existingTransfer.recipientId)
+                return@executeWithLock Pair(TransferWithRecipient(existingTransfer, recipient), false)
             }
 
             // 2. BUSINESS VALIDATION
@@ -83,20 +86,30 @@ class TransferService(
             // 4. RESOLVE DELIVERY METHOD
             val deliveryMethod = DeliveryMethod.fromString(command.deliveryMethod)
 
-            // 5. CREATE TRANSFER ENTITY
-            // В MVP: receive_amount, exchange_rate, fee — заглушки.
-            // В Sprint 2: gRPC вызов к Pricing Service для валидации quote и получения актуальных данных.
+            // 5. VALIDATE QUOTE via Pricing Service (gRPC)
+            val quoteData = pricingClient.validateQuote(command.quoteId.toString())
+
+            // 5a. Validate currency consistency between quote and request
+            if (quoteData.sendCurrency != command.sendCurrency || quoteData.receiveCurrency != command.receiveCurrency) {
+                throw QuoteCorridorMismatchException(
+                    quoteId = command.quoteId.toString(),
+                    quoteCurrency = "${quoteData.sendCurrency}→${quoteData.receiveCurrency}",
+                    requestCurrency = "${command.sendCurrency}→${command.receiveCurrency}"
+                )
+            }
+
+            // 6. CREATE TRANSFER ENTITY with validated quote data
             val transfer = Transfer(
                 idempotencyKey = command.idempotencyKey,
                 senderId = command.senderId,
                 quoteId = command.quoteId,
-                sendAmount = command.sendAmount,
+                sendAmount = quoteData.sendAmount,
                 sendCurrency = command.sendCurrency,
-                receiveAmount = command.sendAmount, // TODO Sprint 2: из Pricing quote
+                receiveAmount = quoteData.receiveAmount,
                 receiveCurrency = command.receiveCurrency,
-                exchangeRate = BigDecimal.ONE,      // TODO Sprint 2: из Pricing quote
-                feeAmount = BigDecimal.ZERO,        // TODO Sprint 2: из Pricing quote
-                feeCurrency = command.sendCurrency,
+                exchangeRate = quoteData.exchangeRate,
+                feeAmount = quoteData.feeAmount,
+                feeCurrency = quoteData.feeCurrency,
                 sourceCountry = command.sourceCountry,
                 destCountry = command.destCountry,
                 deliveryMethod = deliveryMethod,
@@ -104,7 +117,7 @@ class TransferService(
                 status = TransferStatus.Created
             )
 
-            // 6. CREATE OUTBOX EVENT (в той же транзакции!)
+            // 7. CREATE OUTBOX EVENT (в той же транзакции!)
             val outboxPayload = buildTransferCreatedPayload(transfer, recipient)
             val outboxEvent = OutboxEvent(
                 entityId = transfer.id,
@@ -114,7 +127,7 @@ class TransferService(
                 status = OutboxEventStatus.PENDING
             )
 
-            // 7. SAVE BOTH в одной транзакции (@Transactional на методе)
+            // 8. SAVE BOTH в одной транзакции (@Transactional на методе)
             val savedTransfer = transferRepository.save(transfer)
             outboxEventRepository.save(outboxEvent)
 
@@ -126,18 +139,32 @@ class TransferService(
                 savedTransfer.idempotencyKey
             )
 
-            Pair(savedTransfer, true)
+            Pair(TransferWithRecipient(savedTransfer, recipient), true)
         }
     }
 
-    /**
-     * Получить перевод по ID.
-     * Redis cache (Cache-Aside) будет добавлен в Block 7.
-     */
     @Transactional(readOnly = true)
-    fun getTransfer(transferId: UUID): Transfer {
-        return transferRepository.findTransferById(transferId)
+    fun getTransfer(transferId: UUID): TransferWithRecipient {
+        val transfer = transferRepository.findTransferById(transferId)
             ?: throw TransferNotFoundException(transferId)
+        val recipient = recipientRepository.findRecipientById(transfer.recipientId)
+        return TransferWithRecipient(transfer, recipient)
+    }
+
+    @Transactional
+    fun transitionStatus(transferId: UUID, newStatus: TransferStatus, reason: String? = null): TransferWithRecipient {
+        val lockKey = "transfer/${transferId}/status"
+
+        return distributedLockService.executeWithLock(lockKey) {
+            val transfer = transferRepository.findTransferById(transferId)
+                ?: throw TransferNotFoundException(transferId)
+
+            transfer.transitionTo(newStatus, reason)
+            val saved = transferRepository.save(transfer)
+
+            val recipient = recipientRepository.findRecipientById(saved.recipientId)
+            TransferWithRecipient(saved, recipient)
+        }
     }
 
     /**
@@ -146,25 +173,23 @@ class TransferService(
      * @param senderId фильтр по отправителю
      * @param cursor opaque cursor (Base64 encoded JSON), null для первой страницы
      * @param size размер страницы (default 20, max 100)
-     * @return Pair<List<Transfer>, String?> — (результаты, nextCursor или null если больше нет)
+     * @return Pair<List<TransferWithRecipient>, String?> — (результаты, nextCursor или null если больше нет)
      */
     @Transactional(readOnly = true)
     fun listTransfers(
         senderId: UUID,
         cursor: String?,
         size: Int
-    ): Pair<List<Transfer>, String?> {
+    ): Pair<List<TransferWithRecipient>, String?> {
 
         val effectiveSize = size.coerceIn(1, 100)
 
         val transfers = if (cursor == null) {
-            // Первая страница — используем Pageable
             transferRepository.findBySenderIdFirstPage(
                 senderId = senderId,
                 limit = PageRequest.of(0, effectiveSize + 1)
             )
         } else {
-            // Декодируем cursor — используем native query с LIMIT
             val (cursorCreatedAt, cursorId) = decodeCursor(cursor)
             transferRepository.findBySenderIdAfterCursor(
                 senderId = senderId,
@@ -174,7 +199,6 @@ class TransferService(
             )
         }
 
-        // +1 trick: запросили size+1, если вернулось больше size — есть следующая страница
         val hasMore = transfers.size > effectiveSize
         val page = if (hasMore) transfers.take(effectiveSize) else transfers
 
@@ -185,7 +209,12 @@ class TransferService(
             null
         }
 
-        return Pair(page, nextCursor)
+        // Batch lookup recipients
+        val recipientIds = page.map { it.recipientId }.distinct()
+        val recipientMap = recipientRepository.findAllById(recipientIds).associateBy { it.id }
+        val results = page.map { TransferWithRecipient(it, recipientMap[it.recipientId]) }
+
+        return Pair(results, nextCursor)
     }
 
     // ---- Private helpers ----

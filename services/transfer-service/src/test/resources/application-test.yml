@@ -3,28 +3,28 @@ consul:
     enabled: false
 
 spring:
+  flyway:
+    clean-disabled: false
+    enabled: true
+
+  cloud:
+    consul:
+      enabled: false
+      discovery:
+        enabled: false
+
+  kafka:
+    bootstrap-servers: ${spring.embedded.kafka.brokers:localhost:9092}
+
   jpa:
-    hibernate:
-      ddl-auto: validate
     show-sql: true
     properties:
       hibernate:
         format_sql: true
-
-  jackson:
-    property-naming-strategy: SNAKE_CASE
-    serialization:
-      write-dates-as-timestamps: false
-
-  mvc:
-    problemdetails:
-      enabled: true
-
-  flyway:
-    enabled: true
 
 logging:
   level:
     com.swiftpay: DEBUG
     org.springframework.web: INFO
     org.hibernate.SQL: DEBUG
+    org.testcontainers: INFO

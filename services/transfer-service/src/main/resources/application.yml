@@ -95,6 +95,11 @@ springdoc:
   default-produces-media-type: application/json
   default-consumes-media-type: application/json
 
+grpc:
+  pricing:
+    host: ${PRICING_GRPC_HOST:localhost}
+    port: ${PRICING_GRPC_PORT:50051}
+
 consul:
   lock:
     enabled: true

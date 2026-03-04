@@ -1,7 +1,6 @@
 package com.swiftpay.transfer.repository
 
 import com.swiftpay.transfer.domain.model.Transfer
-import com.swiftpay.transfer.domain.model.TransferStatus
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
@@ -11,16 +10,8 @@ import java.util.UUID
 
 interface TransferRepository : JpaRepository<Transfer, UUID> {
 
-    /** Найти перевод по ID (Kotlin nullable) */
     fun findTransferById(id: UUID): Transfer?
 
-    /** Все переводы конкретного отправителя */
-    fun findBySenderIdOrderByCreatedAtDesc(senderId: UUID): List<Transfer>
-
-    /** Проверить существование по idempotency key */
-    fun existsByIdempotencyKey(idempotencyKey: UUID): Boolean
-
-    /** Найти по idempotency key (для возврата cached response) */
     fun findByIdempotencyKey(idempotencyKey: UUID): Transfer?
 
     /**
@@ -61,7 +52,4 @@ interface TransferRepository : JpaRepository<Transfer, UUID> {
         @Param("cursorId") cursorId: UUID,
         @Param("limit") limit: Int
     ): List<Transfer>
-
-    /** Подсчёт активных переводов пользователя (для лимитов) */
-    fun countBySenderIdAndStatusNotIn(senderId: UUID, statuses: List<TransferStatus>): Long
 }

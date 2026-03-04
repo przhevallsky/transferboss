@@ -98,6 +98,7 @@ dependencies {
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.kafka)
+    testImplementation(libs.grpc.inprocess)
 }
 
 tasks.withType<Test> {

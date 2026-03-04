@@ -7,6 +7,7 @@ import com.swiftpay.transfer.repository.ConsumedEventRepository
 import com.swiftpay.transfer.repository.TransferRepository
 import com.swiftpay.transfer.service.TransferCacheService
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
@@ -32,56 +33,62 @@ class PaymentEventConsumer(
             return
         }
 
-        log.info("Received payment event: eventId={}, transferId={}, type={}",
-            event.eventId, event.transferId, event.eventType)
+        try {
+            MDC.put("traceId", event.eventId)
 
-        val newStatus = when (event.eventType) {
-            "PAYMENT_CAPTURED" -> TransferStatus.PaymentCaptured
-            "PAYMENT_FAILED" -> TransferStatus.PaymentFailed
-            else -> {
-                log.warn("Unknown payment event type: {}", event.eventType)
+            log.info("Received payment event: eventId={}, transferId={}, type={}",
+                event.eventId, event.transferId, event.eventType)
+
+            val newStatus = when (event.eventType) {
+                "PAYMENT_CAPTURED" -> TransferStatus.PaymentCaptured
+                "PAYMENT_FAILED" -> TransferStatus.PaymentFailed
+                else -> {
+                    log.warn("Unknown payment event type: {}", event.eventType)
+                    return
+                }
+            }
+
+            val transferId = try {
+                UUID.fromString(event.transferId)
+            } catch (e: IllegalArgumentException) {
+                log.error("Invalid transferId format: {}", event.transferId)
                 return
             }
-        }
 
-        val transferId = try {
-            UUID.fromString(event.transferId)
-        } catch (e: IllegalArgumentException) {
-            log.error("Invalid transferId format: {}", event.transferId)
-            return
-        }
+            val updated = transactionTemplate.execute {
+                if (consumedEventRepository.existsByEventId(event.eventId)) {
+                    log.info("Duplicate event {}, skipping", event.eventId)
+                    return@execute false
+                }
 
-        val updated = transactionTemplate.execute {
-            if (consumedEventRepository.existsByEventId(event.eventId)) {
-                log.info("Duplicate event {}, skipping", event.eventId)
-                return@execute false
-            }
+                val transfer = transferRepository.findTransferById(transferId)
+                if (transfer == null) {
+                    log.error("Transfer not found: {}", transferId)
+                    return@execute false
+                }
 
-            val transfer = transferRepository.findTransferById(transferId)
-            if (transfer == null) {
-                log.error("Transfer not found: {}", transferId)
-                return@execute false
-            }
+                transfer.transitionTo(newStatus, event.reason)
+                if (event.paymentId != null) {
+                    transfer.paymentId = UUID.fromString(event.paymentId)
+                }
+                transferRepository.save(transfer)
+                log.info("Transfer {} status updated to {}", transferId, newStatus.value)
 
-            transfer.transitionTo(newStatus, event.reason)
-            if (event.paymentId != null) {
-                transfer.paymentId = UUID.fromString(event.paymentId)
-            }
-            transferRepository.save(transfer)
-            log.info("Transfer {} status updated to {}", transferId, newStatus.value)
-
-            consumedEventRepository.save(
-                ConsumedEvent(
-                    eventId = event.eventId,
-                    consumerGroup = "transfer-service",
-                    topic = "payment.events"
+                consumedEventRepository.save(
+                    ConsumedEvent(
+                        eventId = event.eventId,
+                        consumerGroup = "transfer-service",
+                        topic = "payment.events"
+                    )
                 )
-            )
-            true
-        } ?: false
+                true
+            } ?: false
 
-        if (updated) {
-            transferCacheService.evict(transferId)
+            if (updated) {
+                transferCacheService.evict(transferId)
+            }
+        } finally {
+            MDC.clear()
         }
     }
 }

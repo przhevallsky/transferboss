@@ -46,6 +46,7 @@ dependencies {
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.content.negotiation)
+    implementation(libs.ktor.server.call.logging)
     implementation(libs.ktor.server.status.pages)
     implementation(libs.ktor.server.config.yaml)
     implementation(libs.ktor.server.metrics.micrometer)

@@ -1,12 +1,14 @@
 package com.transferhub.pricing.plugins
 
+import com.transferhub.pricing.routes.quoteRoutes
+import com.transferhub.pricing.service.PricingService
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.*
 
-fun Application.configureRouting() {
+fun Application.configureRouting(pricingService: PricingService? = null) {
     routing {
         get("/health/live") {
             call.respondText("OK", ContentType.Text.Plain, HttpStatusCode.OK)
@@ -40,6 +42,10 @@ fun Application.configureRouting() {
                 }
                 call.respondText(body.toString(), ContentType.Application.Json, HttpStatusCode.OK)
             }
+        }
+
+        if (pricingService != null) {
+            quoteRoutes(pricingService)
         }
     }
 }

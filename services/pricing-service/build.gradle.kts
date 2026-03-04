@@ -72,8 +72,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.reactor)
 
     // ── Observability ────────────────────────────────────────────────
-    implementation(libs.micrometer.registry.prometheus)
-    implementation(libs.logback.logstash.encoder)
+    implementation(libs.micrometer.prometheus)
+    implementation(libs.logstash.logback)
 
     // ── Testing ──────────────────────────────────────────────────────
     testImplementation(libs.grpc.testing)

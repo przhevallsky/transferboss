@@ -33,6 +33,8 @@ class OutboxPollingScheduler(
 
             logger.info("Polled {} pending outbox events", events.size)
             publisher.publish(events)
+        } catch (e: Exception) {
+            logger.error("Outbox polling failed: {}", e.message, e)
         } finally {
             MDC.clear()
         }

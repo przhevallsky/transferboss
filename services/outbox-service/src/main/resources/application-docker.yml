@@ -1,5 +1,5 @@
 spring:
   datasource:
-    url: jdbc:postgresql://postgres:5432/transfer_db
+    url: jdbc:postgresql://postgres:5432/transferhub
   kafka:
     bootstrap-servers: kafka:9092

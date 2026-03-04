@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.spring)
+    alias(libs.plugins.kotlin.jpa)
     alias(libs.plugins.spring.boot)
     alias(libs.plugins.spring.dependency.mgmt)
 }
@@ -26,13 +27,13 @@ dependencies {
     implementation(libs.jackson.datatype.jsr310)
 
     // Database (read-only access to outbox table — same DB as Transfer Service)
-    runtimeOnly(libs.postgresql.driver)
+    runtimeOnly(libs.postgresql)
     // Flyway NOT needed — migrations are managed by Transfer Service.
     // Outbox Service only reads/updates the outbox table.
 
     // Observability
-    implementation(libs.micrometer.registry.prometheus)
-    implementation(libs.logback.logstash.encoder)
+    implementation(libs.micrometer.prometheus)
+    implementation(libs.logstash.logback)
 
     // Tests
     testImplementation(libs.spring.boot.starter.test) {

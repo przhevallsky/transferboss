@@ -16,4 +16,7 @@ data class Quote(
     val feeCurrency: String,
     val deliveryMethod: String,
     val expiresAt: Instant,
+    val senderId: String,
+    val deliveryEstimateMinMinutes: Int,
+    val deliveryEstimateMaxMinutes: Int,
 )

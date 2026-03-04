@@ -1,10 +1,20 @@
 package com.transferhub.pricing.grpc
 
+import com.transferhub.pricing.api.dto.QuoteRequest
 import com.transferhub.pricing.grpc.v1.*
+import com.transferhub.pricing.model.Quote
+import com.transferhub.pricing.service.CorridorNotSupportedException
+import com.transferhub.pricing.service.DeliveryMethodNotAvailableException
+import com.transferhub.pricing.service.InvalidAmountException
+import com.transferhub.pricing.service.PricingService
+import io.grpc.Status
+import io.grpc.StatusException
 import org.slf4j.LoggerFactory
-import java.util.UUID
+import java.time.Instant
 
-class PricingGrpcService : PricingServiceGrpcKt.PricingServiceCoroutineImplBase() {
+class PricingGrpcService(
+    private val pricingService: PricingService
+) : PricingServiceGrpcKt.PricingServiceCoroutineImplBase() {
 
     private val logger = LoggerFactory.getLogger(PricingGrpcService::class.java)
 
@@ -16,42 +26,72 @@ class PricingGrpcService : PricingServiceGrpcKt.PricingServiceCoroutineImplBase(
             request.sendAmount, request.deliveryMethod
         )
 
-        val quoteId = UUID.randomUUID().toString()
-        val expiresAt = System.currentTimeMillis() + 30_000
+        try {
+            val quoteRequest = QuoteRequest(
+                sourceCountry = request.sourceCountry,
+                destinationCountry = request.destinationCountry,
+                sendCurrency = request.sendCurrency,
+                receiveCurrency = request.receiveCurrency,
+                sendAmount = request.sendAmount,
+                deliveryMethod = request.deliveryMethod,
+                senderId = request.senderId,
+            )
 
-        return quoteResponse {
-            this.quoteId = quoteId
-            this.sendAmount = request.sendAmount
-            this.receiveAmount = "4250.00"
-            this.exchangeRate = "4.2500"
-            this.feeAmount = "3.99"
-            this.feeCurrency = request.sendCurrency
-            this.sendCurrency = request.sendCurrency
-            this.receiveCurrency = request.receiveCurrency
-            this.deliveryMethod = request.deliveryMethod
-            this.expiresAtEpochMs = expiresAt
-            this.ttlSeconds = 30
+            val quote = pricingService.calculateQuote(quoteRequest)
+            return toQuoteResponse(quote)
+        } catch (e: CorridorNotSupportedException) {
+            throw StatusException(Status.INVALID_ARGUMENT.withDescription(e.message))
+        } catch (e: DeliveryMethodNotAvailableException) {
+            throw StatusException(Status.INVALID_ARGUMENT.withDescription(e.message))
+        } catch (e: InvalidAmountException) {
+            throw StatusException(Status.INVALID_ARGUMENT.withDescription(e.message))
+        } catch (e: Exception) {
+            logger.error("Unexpected error in getQuote", e)
+            throw StatusException(Status.INTERNAL.withDescription("Internal error"))
         }
     }
 
     override suspend fun validateQuote(request: ValidateQuoteRequest): ValidateQuoteResponse {
         logger.info("ValidateQuote request: quoteId={}", request.quoteId)
 
-        return validateQuoteResponse {
-            this.isValid = true
-            this.quote = quoteResponse {
-                this.quoteId = request.quoteId
-                this.sendAmount = "1000.00"
-                this.receiveAmount = "4250.00"
-                this.exchangeRate = "4.2500"
-                this.feeAmount = "3.99"
-                this.feeCurrency = "GBP"
-                this.sendCurrency = "GBP"
-                this.receiveCurrency = "PLN"
-                this.deliveryMethod = "BANK_TRANSFER"
-                this.expiresAtEpochMs = System.currentTimeMillis() + 25_000
-                this.ttlSeconds = 25
+        if (request.quoteId.isBlank()) {
+            throw StatusException(Status.INVALID_ARGUMENT.withDescription("quoteId must not be blank"))
+        }
+
+        try {
+            val result = pricingService.validateQuote(request.quoteId)
+
+            return validateQuoteResponse {
+                this.isValid = result.isValid
+                if (result.isValid && result.quote != null) {
+                    this.quote = toQuoteResponse(result.quote)
+                }
+                if (!result.isValid) {
+                    this.rejectionReason = "Quote not found or expired"
+                }
             }
+        } catch (e: Exception) {
+            logger.error("Unexpected error in validateQuote", e)
+            throw StatusException(Status.INTERNAL.withDescription("Internal error"))
+        }
+    }
+
+    private fun toQuoteResponse(quote: Quote): QuoteResponse {
+        val now = Instant.now()
+        val ttl = (quote.expiresAt.epochSecond - now.epochSecond).toInt().coerceAtLeast(0)
+
+        return quoteResponse {
+            this.quoteId = quote.quoteId
+            this.sendAmount = quote.sendAmount.toPlainString()
+            this.receiveAmount = quote.receiveAmount.toPlainString()
+            this.exchangeRate = quote.exchangeRate.toPlainString()
+            this.feeAmount = quote.feeAmount.toPlainString()
+            this.feeCurrency = quote.feeCurrency
+            this.sendCurrency = quote.sendCurrency
+            this.receiveCurrency = quote.receiveCurrency
+            this.deliveryMethod = quote.deliveryMethod
+            this.expiresAtEpochMs = quote.expiresAt.toEpochMilli()
+            this.ttlSeconds = ttl
         }
     }
 }

@@ -17,6 +17,7 @@ data class AppConfig(
             redis = RedisConfig(
                 host = envOrDefault("REDIS_HOST", "localhost"),
                 port = envOrDefault("REDIS_PORT", "6379").toInt(),
+                quoteTtlSeconds = envOrDefault("REDIS_QUOTE_TTL_SECONDS", "30").toLong(),
             ),
             mongodb = MongoDbConfig(
                 uri = envOrDefault("MONGODB_URI", "mongodb://localhost:27017"),
@@ -31,5 +32,5 @@ data class AppConfig(
 
 data class ServerConfig(val port: Int)
 data class GrpcConfig(val port: Int)
-data class RedisConfig(val host: String, val port: Int)
+data class RedisConfig(val host: String, val port: Int, val quoteTtlSeconds: Long = 30)
 data class MongoDbConfig(val uri: String, val database: String)

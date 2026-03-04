@@ -1,5 +1,8 @@
 package com.transferhub.pricing.plugins
 
+import com.transferhub.pricing.service.CorridorNotSupportedException
+import com.transferhub.pricing.service.DeliveryMethodNotAvailableException
+import com.transferhub.pricing.service.InvalidAmountException
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.plugins.statuspages.*
@@ -27,6 +30,45 @@ fun Application.configureErrorHandling() {
                     title = "Not Found",
                     status = 404,
                     detail = "Requested resource not found",
+                    instance = call.request.local.uri,
+                )
+            )
+        }
+
+        exception<CorridorNotSupportedException> { call, cause ->
+            logger.warn("Corridor not supported: ${cause.message}")
+            call.respond(
+                HttpStatusCode.UnprocessableEntity,
+                ProblemDetail(
+                    title = "Unprocessable Entity",
+                    status = 422,
+                    detail = cause.message,
+                    instance = call.request.local.uri,
+                )
+            )
+        }
+
+        exception<DeliveryMethodNotAvailableException> { call, cause ->
+            logger.warn("Delivery method not available: ${cause.message}")
+            call.respond(
+                HttpStatusCode.UnprocessableEntity,
+                ProblemDetail(
+                    title = "Unprocessable Entity",
+                    status = 422,
+                    detail = cause.message,
+                    instance = call.request.local.uri,
+                )
+            )
+        }
+
+        exception<InvalidAmountException> { call, cause ->
+            logger.warn("Invalid amount: ${cause.message}")
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ProblemDetail(
+                    title = "Bad Request",
+                    status = 400,
+                    detail = cause.message,
                     instance = call.request.local.uri,
                 )
             )

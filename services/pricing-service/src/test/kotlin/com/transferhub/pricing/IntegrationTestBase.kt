@@ -34,6 +34,7 @@ abstract class IntegrationTestBase {
         redis = RedisConfig(
             host = redis.host,
             port = redis.getMappedPort(6379),
+            quoteTtlSeconds = 30,
         ),
         mongodb = MongoDbConfig(
             uri = mongodb.connectionString,

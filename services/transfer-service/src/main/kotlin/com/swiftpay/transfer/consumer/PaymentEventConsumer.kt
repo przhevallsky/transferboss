@@ -47,7 +47,7 @@ class PaymentEventConsumer(
 
     @RetryableTopic(
         attempts = "4",
-        backoff = Backoff(delay = 30_000, multiplier = 10.0, maxDelay = 3_600_000),
+        backoff = Backoff(delayExpression = "\${kafka.retry.delay:30000}", multiplierExpression = "\${kafka.retry.multiplier:10.0}", maxDelayExpression = "\${kafka.retry.max-delay:3600000}"),
         topicSuffixingStrategy = TopicSuffixingStrategy.SUFFIX_WITH_INDEX_VALUE,
         dltStrategy = DltStrategy.FAIL_ON_ERROR,
         exclude = [NonRetriableConsumerException::class]

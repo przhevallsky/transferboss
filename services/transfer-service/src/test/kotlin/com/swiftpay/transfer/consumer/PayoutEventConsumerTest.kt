@@ -13,6 +13,7 @@ import com.swiftpay.transfer.repository.ConsumedEventRepository
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.TransferRepository
 import com.swiftpay.transfer.service.TransferCacheService
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.mockk.*
 import io.mockk.junit5.MockKExtension
 import org.junit.jupiter.api.BeforeEach
@@ -24,6 +25,9 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
 import java.util.UUID
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
+import com.swiftpay.transfer.consumer.exception.NonRetriableConsumerException
+import com.swiftpay.transfer.consumer.exception.TransientConsumerException
 
 @ExtendWith(MockKExtension::class)
 class PayoutEventConsumerTest {
@@ -53,7 +57,8 @@ class PayoutEventConsumerTest {
             consumedEventRepository = consumedEventRepository,
             outboxEventRepository = outboxEventRepository,
             transactionTemplate = transactionTemplate,
-            objectMapper = objectMapper
+            objectMapper = objectMapper,
+            meterRegistry = SimpleMeterRegistry()
         )
 
         // Make TransactionTemplate actually execute the callback
@@ -180,35 +185,43 @@ class PayoutEventConsumerTest {
     inner class ErrorHandling {
 
         @Test
-        fun `should skip unknown event type`() {
-            consumer.consume(eventJson("PAYOUT_REVERSED"), "payouts.payout.completed")
+        fun `should throw NonRetriableConsumerException for unknown event type`() {
+            assertThrows(NonRetriableConsumerException::class.java) {
+                consumer.consume(eventJson("PAYOUT_REVERSED"), "payouts.payout.completed")
+            }
 
             verify(exactly = 0) { transactionTemplate.execute(any<TransactionCallback<Boolean>>()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
         }
 
         @Test
-        fun `should skip invalid transferId format`() {
-            consumer.consume(eventJson("PAYOUT_COMPLETED", transferId = "not-a-uuid"), "payouts.payout.completed")
+        fun `should throw NonRetriableConsumerException for invalid transferId format`() {
+            assertThrows(NonRetriableConsumerException::class.java) {
+                consumer.consume(eventJson("PAYOUT_COMPLETED", transferId = "not-a-uuid"), "payouts.payout.completed")
+            }
 
             verify(exactly = 0) { transactionTemplate.execute(any<TransactionCallback<Boolean>>()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
         }
 
         @Test
-        fun `should handle transfer not found`() {
+        fun `should throw TransientConsumerException when transfer not found`() {
             every { consumedEventRepository.existsByEventId(eventId) } returns false
             every { transferRepository.findTransferById(transferId) } returns null
 
-            consumer.consume(eventJson("PAYOUT_COMPLETED"), "payouts.payout.completed")
+            assertThrows(TransientConsumerException::class.java) {
+                consumer.consume(eventJson("PAYOUT_COMPLETED"), "payouts.payout.completed")
+            }
 
             verify(exactly = 0) { transferRepository.save(any()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
         }
 
         @Test
-        fun `should handle deserialization failure gracefully`() {
-            consumer.consume("not valid json {{{", "payouts.payout.completed")
+        fun `should throw NonRetriableConsumerException on deserialization failure`() {
+            assertThrows(NonRetriableConsumerException::class.java) {
+                consumer.consume("not valid json {{{", "payouts.payout.completed")
+            }
 
             verify(exactly = 0) { transactionTemplate.execute(any<TransactionCallback<Boolean>>()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
@@ -216,8 +229,7 @@ class PayoutEventConsumerTest {
 
         @Test
         fun `should not evict cache when transaction returns false`() {
-            every { consumedEventRepository.existsByEventId(eventId) } returns false
-            every { transferRepository.findTransferById(transferId) } returns null
+            every { consumedEventRepository.existsByEventId(eventId) } returns true
 
             consumer.consume(eventJson("PAYOUT_COMPLETED"), "payouts.payout.completed")
 

@@ -1,6 +1,8 @@
 package com.swiftpay.transfer.consumer
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.swiftpay.transfer.consumer.exception.NonRetriableConsumerException
+import com.swiftpay.transfer.consumer.exception.TransientConsumerException
 import com.swiftpay.transfer.domain.model.ConsumedEvent
 import com.swiftpay.transfer.domain.model.OutboxEvent
 import com.swiftpay.transfer.domain.model.TransferStatus
@@ -10,11 +12,18 @@ import com.swiftpay.transfer.repository.ConsumedEventRepository
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.TransferRepository
 import com.swiftpay.transfer.service.TransferCacheService
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
+import org.springframework.kafka.annotation.DltHandler
 import org.springframework.kafka.annotation.KafkaListener
+import org.springframework.kafka.annotation.RetryableTopic
+import org.springframework.kafka.retrytopic.DltStrategy
+import org.springframework.kafka.retrytopic.TopicSuffixingStrategy
 import org.springframework.kafka.support.KafkaHeaders
 import org.springframework.messaging.handler.annotation.Header
+import org.springframework.retry.annotation.Backoff
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
@@ -26,18 +35,29 @@ class PaymentEventConsumer(
     private val consumedEventRepository: ConsumedEventRepository,
     private val outboxEventRepository: OutboxEventRepository,
     private val transactionTemplate: TransactionTemplate,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    meterRegistry: MeterRegistry
 ) {
 
     private val log = LoggerFactory.getLogger(PaymentEventConsumer::class.java)
 
+    private val dltCounter: Counter = Counter.builder("kafka.dlt.messages.total")
+        .tag("topic", "payments.payment")
+        .register(meterRegistry)
+
+    @RetryableTopic(
+        attempts = "4",
+        backoff = Backoff(delay = 30_000, multiplier = 10.0, maxDelay = 3_600_000),
+        topicSuffixingStrategy = TopicSuffixingStrategy.SUFFIX_WITH_INDEX_VALUE,
+        dltStrategy = DltStrategy.FAIL_ON_ERROR,
+        exclude = [NonRetriableConsumerException::class]
+    )
     @KafkaListener(topics = ["payments.payment.captured", "payments.payment.failed", "payments.payment.refunded"], groupId = "transfer-service")
     fun consume(message: String, @Header(KafkaHeaders.RECEIVED_TOPIC) receivedTopic: String) {
         val event = try {
             objectMapper.readValue(message, PaymentEvent::class.java)
         } catch (e: Exception) {
-            log.error("Failed to deserialize payment event: {}", e.message)
-            return
+            throw NonRetriableConsumerException("Failed to deserialize payment event", e)
         }
 
         try {
@@ -50,17 +70,13 @@ class PaymentEventConsumer(
                 "PAYMENT_CAPTURED" -> TransferStatus.PaymentCaptured
                 "PAYMENT_FAILED" -> TransferStatus.PaymentFailed
                 "PAYMENT_REFUNDED" -> TransferStatus.Refunded
-                else -> {
-                    log.warn("Unknown payment event type: {}", event.eventType)
-                    return
-                }
+                else -> throw NonRetriableConsumerException("Unknown payment event type: ${event.eventType}")
             }
 
             val transferId = try {
                 UUID.fromString(event.transferId)
             } catch (e: IllegalArgumentException) {
-                log.error("Invalid transferId format: {}", event.transferId)
-                return
+                throw NonRetriableConsumerException("Invalid transferId format: ${event.transferId}", e)
             }
 
             val updated = transactionTemplate.execute {
@@ -70,10 +86,7 @@ class PaymentEventConsumer(
                 }
 
                 val transfer = transferRepository.findTransferById(transferId)
-                if (transfer == null) {
-                    log.error("Transfer not found: {}", transferId)
-                    return@execute false
-                }
+                    ?: throw TransientConsumerException("Transfer not found: $transferId")
 
                 transfer.transitionTo(newStatus, event.reason)
                 if (event.paymentId != null) {
@@ -82,7 +95,6 @@ class PaymentEventConsumer(
                 transferRepository.save(transfer)
                 log.info("Transfer {} status updated to {}", transferId, newStatus.value)
 
-                // On PAYMENT_CAPTURED: emit PAYOUT_REQUESTED and transition to PAYOUT_PENDING
                 if (newStatus == TransferStatus.PaymentCaptured) {
                     val payoutPayload = objectMapper.writeValueAsString(mapOf(
                         "event_id" to UUID.randomUUID().toString(),
@@ -123,5 +135,11 @@ class PaymentEventConsumer(
         } finally {
             MDC.clear()
         }
+    }
+
+    @DltHandler
+    fun handleDlt(message: String, @Header(KafkaHeaders.RECEIVED_TOPIC) topic: String) {
+        dltCounter.increment()
+        log.error("Payment event sent to DLT: topic={}, message={}", topic, message)
     }
 }

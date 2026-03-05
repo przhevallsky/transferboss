@@ -26,7 +26,7 @@ import java.util.UUID
 import org.junit.jupiter.api.Assertions.assertEquals
 
 @ExtendWith(MockKExtension::class)
-class PaymentEventConsumerTest {
+class PayoutEventConsumerTest {
 
     private val transferRepository: TransferRepository = mockk()
     private val transferCacheService: TransferCacheService = mockk(relaxed = true)
@@ -39,15 +39,15 @@ class PaymentEventConsumerTest {
         registerModule(JavaTimeModule())
     }
 
-    private lateinit var consumer: PaymentEventConsumer
+    private lateinit var consumer: PayoutEventConsumer
 
     private val transferId = UUID.randomUUID()
     private val eventId = "evt-${UUID.randomUUID()}"
-    private val paymentId = UUID.randomUUID().toString()
+    private val payoutId = UUID.randomUUID().toString()
 
     @BeforeEach
     fun setup() {
-        consumer = PaymentEventConsumer(
+        consumer = PayoutEventConsumer(
             transferRepository = transferRepository,
             transferCacheService = transferCacheService,
             consumedEventRepository = consumedEventRepository,
@@ -63,7 +63,10 @@ class PaymentEventConsumerTest {
         }
     }
 
-    private fun createTransfer(status: TransferStatus = TransferStatus.PaymentPending): Transfer = Transfer(
+    private fun createTransfer(
+        status: TransferStatus = TransferStatus.PayoutPending,
+        paymentId: UUID? = UUID.randomUUID()
+    ): Transfer = Transfer(
         id = transferId,
         idempotencyKey = UUID.randomUUID(),
         senderId = UUID.randomUUID(),
@@ -79,100 +82,81 @@ class PaymentEventConsumerTest {
         destCountry = "PH",
         deliveryMethod = DeliveryMethod.BANK_DEPOSIT,
         recipientId = UUID.randomUUID(),
-        status = status
+        status = status,
+        paymentId = paymentId
     )
 
     private fun eventJson(
         eventType: String,
         transferId: String = this.transferId.toString(),
         eventId: String = this.eventId,
-        paymentId: String? = this.paymentId,
+        payoutId: String? = this.payoutId,
         reason: String? = null
     ): String = objectMapper.writeValueAsString(
-        PaymentEvent(
+        PayoutEvent(
             eventId = eventId,
             transferId = transferId,
             eventType = eventType,
-            paymentId = paymentId,
+            payoutId = payoutId,
             reason = reason,
             timestamp = "2026-03-04T10:00:00Z"
         )
     )
 
     @Nested
-    inner class PaymentCaptured {
+    inner class PayoutCompleted {
 
         @Test
-        fun `should transition transfer to PAYOUT_PENDING and save outbox event`() {
-            val transfer = createTransfer()
-            every { consumedEventRepository.existsByEventId(eventId) } returns false
-            every { transferRepository.findTransferById(transferId) } returns transfer
-            every { transferRepository.save(any()) } answers { firstArg() }
-            every { consumedEventRepository.save(any()) } answers { firstArg() }
-            every { outboxEventRepository.save(any()) } answers { firstArg() }
-
-            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
-
-            assertEquals(TransferStatus.PayoutPending, transfer.status)
-            verify(exactly = 2) { transferRepository.save(transfer) }
-            verify { consumedEventRepository.save(match { it.eventId == eventId }) }
-            verify { outboxEventRepository.save(match {
-                it.eventType == OutboxEventType.PAYOUT_REQUESTED &&
-                    it.targetTopic == "transfers.payout.requested"
-            }) }
-            verify { transferCacheService.evict(transferId) }
-        }
-
-        @Test
-        fun `should set paymentId on transfer when present`() {
-            val transfer = createTransfer()
-            every { consumedEventRepository.existsByEventId(eventId) } returns false
-            every { transferRepository.findTransferById(transferId) } returns transfer
-            every { transferRepository.save(any()) } answers { firstArg() }
-            every { consumedEventRepository.save(any()) } answers { firstArg() }
-            every { outboxEventRepository.save(any()) } answers { firstArg() }
-
-            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
-
-            assertEquals(UUID.fromString(paymentId), transfer.paymentId)
-        }
-    }
-
-    @Nested
-    inner class PaymentFailed {
-
-        @Test
-        fun `should transition transfer to PAYMENT_FAILED with reason`() {
+        fun `should transition transfer to COMPLETED and evict cache`() {
             val transfer = createTransfer()
             every { consumedEventRepository.existsByEventId(eventId) } returns false
             every { transferRepository.findTransferById(transferId) } returns transfer
             every { transferRepository.save(any()) } answers { firstArg() }
             every { consumedEventRepository.save(any()) } answers { firstArg() }
 
-            consumer.consume(eventJson("PAYMENT_FAILED", reason = "Insufficient funds"), "payments.payment.failed")
+            consumer.consume(eventJson("PAYOUT_COMPLETED"), "payouts.payout.completed")
 
-            assertEquals(TransferStatus.PaymentFailed, transfer.status)
-            assertEquals("Insufficient funds", transfer.statusReason)
-            verify { transferCacheService.evict(transferId) }
-        }
-    }
-
-    @Nested
-    inner class PaymentRefunded {
-
-        @Test
-        fun `should transition transfer to REFUNDED and evict cache`() {
-            val transfer = createTransfer(status = TransferStatus.RefundPending)
-            every { consumedEventRepository.existsByEventId(eventId) } returns false
-            every { transferRepository.findTransferById(transferId) } returns transfer
-            every { transferRepository.save(any()) } answers { firstArg() }
-            every { consumedEventRepository.save(any()) } answers { firstArg() }
-
-            consumer.consume(eventJson("PAYMENT_REFUNDED"), "payments.payment.refunded")
-
-            assertEquals(TransferStatus.Refunded, transfer.status)
+            assertEquals(TransferStatus.Completed, transfer.status)
             verify { transferRepository.save(transfer) }
             verify { consumedEventRepository.save(match { it.eventId == eventId }) }
+            verify { transferCacheService.evict(transferId) }
+        }
+
+        @Test
+        fun `should set payoutId on transfer when present`() {
+            val transfer = createTransfer()
+            every { consumedEventRepository.existsByEventId(eventId) } returns false
+            every { transferRepository.findTransferById(transferId) } returns transfer
+            every { transferRepository.save(any()) } answers { firstArg() }
+            every { consumedEventRepository.save(any()) } answers { firstArg() }
+
+            consumer.consume(eventJson("PAYOUT_COMPLETED"), "payouts.payout.completed")
+
+            assertEquals(UUID.fromString(payoutId), transfer.payoutId)
+        }
+    }
+
+    @Nested
+    inner class PayoutFailed {
+
+        @Test
+        fun `should transition transfer to REFUND_PENDING and save refund outbox event`() {
+            val transfer = createTransfer()
+            every { consumedEventRepository.existsByEventId(eventId) } returns false
+            every { transferRepository.findTransferById(transferId) } returns transfer
+            every { transferRepository.save(any()) } answers { firstArg() }
+            every { consumedEventRepository.save(any()) } answers { firstArg() }
+            every { outboxEventRepository.save(any()) } answers { firstArg() }
+
+            consumer.consume(eventJson("PAYOUT_FAILED", reason = "PARTNER_UNAVAILABLE"), "payouts.payout.failed")
+
+            assertEquals(TransferStatus.RefundPending, transfer.status)
+            // statusReason is cleared by transitionTo(RefundPending)
+            verify(exactly = 2) { transferRepository.save(transfer) }
+            verify { outboxEventRepository.save(match {
+                it.eventType == OutboxEventType.REFUND_REQUESTED &&
+                    it.targetTopic == "transfers.payment.refund.requested"
+            }) }
             verify { transferCacheService.evict(transferId) }
         }
     }
@@ -184,7 +168,7 @@ class PaymentEventConsumerTest {
         fun `should skip processing when event already consumed`() {
             every { consumedEventRepository.existsByEventId(eventId) } returns true
 
-            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
+            consumer.consume(eventJson("PAYOUT_COMPLETED"), "payouts.payout.completed")
 
             verify(exactly = 0) { transferRepository.findTransferById(any()) }
             verify(exactly = 0) { transferRepository.save(any()) }
@@ -197,7 +181,7 @@ class PaymentEventConsumerTest {
 
         @Test
         fun `should skip unknown event type`() {
-            consumer.consume(eventJson("PAYMENT_REVERSED"), "payments.payment.captured")
+            consumer.consume(eventJson("PAYOUT_REVERSED"), "payouts.payout.completed")
 
             verify(exactly = 0) { transactionTemplate.execute(any<TransactionCallback<Boolean>>()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
@@ -205,7 +189,7 @@ class PaymentEventConsumerTest {
 
         @Test
         fun `should skip invalid transferId format`() {
-            consumer.consume(eventJson("PAYMENT_CAPTURED", transferId = "not-a-uuid"), "payments.payment.captured")
+            consumer.consume(eventJson("PAYOUT_COMPLETED", transferId = "not-a-uuid"), "payouts.payout.completed")
 
             verify(exactly = 0) { transactionTemplate.execute(any<TransactionCallback<Boolean>>()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
@@ -216,7 +200,7 @@ class PaymentEventConsumerTest {
             every { consumedEventRepository.existsByEventId(eventId) } returns false
             every { transferRepository.findTransferById(transferId) } returns null
 
-            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
+            consumer.consume(eventJson("PAYOUT_COMPLETED"), "payouts.payout.completed")
 
             verify(exactly = 0) { transferRepository.save(any()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
@@ -224,7 +208,7 @@ class PaymentEventConsumerTest {
 
         @Test
         fun `should handle deserialization failure gracefully`() {
-            consumer.consume("not valid json {{{", "payments.payment.captured")
+            consumer.consume("not valid json {{{", "payouts.payout.completed")
 
             verify(exactly = 0) { transactionTemplate.execute(any<TransactionCallback<Boolean>>()) }
             verify(exactly = 0) { transferCacheService.evict(any()) }
@@ -235,7 +219,7 @@ class PaymentEventConsumerTest {
             every { consumedEventRepository.existsByEventId(eventId) } returns false
             every { transferRepository.findTransferById(transferId) } returns null
 
-            consumer.consume(eventJson("PAYMENT_CAPTURED"), "payments.payment.captured")
+            consumer.consume(eventJson("PAYOUT_COMPLETED"), "payouts.payout.completed")
 
             verify(exactly = 0) { transferCacheService.evict(any()) }
         }

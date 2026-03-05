@@ -18,7 +18,7 @@ import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-class PaymentEventConsumerIntegrationTest : IntegrationTestBase() {
+class PayoutEventConsumerIntegrationTest : IntegrationTestBase() {
 
     @Autowired
     private lateinit var kafkaTemplate: KafkaTemplate<String, String>
@@ -40,133 +40,109 @@ class PaymentEventConsumerIntegrationTest : IntegrationTestBase() {
     private val recipientId = UUID.fromString("11111111-1111-1111-1111-111111111111")
 
     @Test
-    fun `should transition transfer to PAYOUT_PENDING and write outbox event on PAYMENT_CAPTURED`() {
-        val transfer = createTransferWithStatus(TransferStatus.PaymentPending)
+    fun `should update transfer status to COMPLETED on payout completed event`() {
+        val transfer = createTransferWithStatus(TransferStatus.PayoutPending)
         val cacheKey = "transfer:status:${transfer.id}"
         redisTemplate.opsForValue().set(cacheKey, "cached-data")
 
-        val paymentId = UUID.randomUUID()
+        val payoutId = UUID.randomUUID()
         val event = """
             {
                 "event_id": "${UUID.randomUUID()}",
                 "transfer_id": "${transfer.id}",
-                "event_type": "PAYMENT_CAPTURED",
-                "payment_id": "$paymentId",
+                "event_type": "PAYOUT_COMPLETED",
+                "payout_id": "$payoutId",
                 "timestamp": "${Instant.now()}"
             }
         """.trimIndent()
 
-        kafkaTemplate.send("payments.payment.captured", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
+        kafkaTemplate.send("payouts.payout.completed", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
 
         awaitCondition {
             val updated = transferRepository.findTransferById(transfer.id)
-            updated?.status == TransferStatus.PayoutPending
+            updated?.status == TransferStatus.Completed
         }
 
         val updated = transferRepository.findTransferById(transfer.id)!!
-        assertEquals(TransferStatus.PayoutPending, updated.status)
-        assertNotNull(updated.paymentId)
-
-        // Verify outbox event was written
-        val outboxEvents = outboxEventRepository.findByEntityIdOrderByCreatedAtAsc(transfer.id)
-        val payoutOutbox = outboxEvents.find { it.eventType == OutboxEventType.PAYOUT_REQUESTED }
-        assertNotNull(payoutOutbox)
-        assertEquals("transfers.payout.requested", payoutOutbox!!.targetTopic)
+        assertEquals(TransferStatus.Completed, updated.status)
+        assertNotNull(updated.payoutId)
+        assertNotNull(updated.completedAt)
 
         assertNull(redisTemplate.opsForValue().get(cacheKey))
     }
 
     @Test
-    fun `should update transfer status to PAYMENT_FAILED on failed payment event`() {
-        val transfer = createTransferWithStatus(TransferStatus.PaymentPending)
+    fun `should transition to REFUND_PENDING and save refund outbox on payout failed event`() {
+        val transfer = createTransferWithStatus(TransferStatus.PayoutPending)
+        // Set paymentId as it would be after PAYMENT_CAPTURED
+        transfer.paymentId = UUID.randomUUID()
+        transferRepository.save(transfer)
 
         val event = """
             {
                 "event_id": "${UUID.randomUUID()}",
                 "transfer_id": "${transfer.id}",
-                "event_type": "PAYMENT_FAILED",
-                "reason": "Insufficient funds",
+                "event_type": "PAYOUT_FAILED",
+                "reason": "PARTNER_UNAVAILABLE",
                 "timestamp": "${Instant.now()}"
             }
         """.trimIndent()
 
-        kafkaTemplate.send("payments.payment.failed", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
+        kafkaTemplate.send("payouts.payout.failed", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
 
         awaitCondition {
             val updated = transferRepository.findTransferById(transfer.id)
-            updated?.status == TransferStatus.PaymentFailed
+            updated?.status == TransferStatus.RefundPending
         }
 
         val updated = transferRepository.findTransferById(transfer.id)!!
-        assertEquals(TransferStatus.PaymentFailed, updated.status)
-        assertEquals("Insufficient funds", updated.statusReason)
+        assertEquals(TransferStatus.RefundPending, updated.status)
+
+        // Verify outbox event was written
+        val outboxEvents = outboxEventRepository.findByEntityIdOrderByCreatedAtAsc(transfer.id)
+        val refundOutbox = outboxEvents.find { it.eventType == OutboxEventType.REFUND_REQUESTED }
+        assertNotNull(refundOutbox)
+        assertEquals("transfers.payment.refund.requested", refundOutbox!!.targetTopic)
     }
 
     @Test
-    fun `should transition transfer to REFUNDED on payment refunded event`() {
-        val transfer = createTransferWithStatus(TransferStatus.RefundPending)
-
-        val event = """
-            {
-                "event_id": "${UUID.randomUUID()}",
-                "transfer_id": "${transfer.id}",
-                "event_type": "PAYMENT_REFUNDED",
-                "refund_id": "${UUID.randomUUID()}",
-                "refunded_amount": "200.00",
-                "refunded_at": "${Instant.now()}",
-                "timestamp": "${Instant.now()}"
-            }
-        """.trimIndent()
-
-        kafkaTemplate.send("payments.payment.refunded", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
-
-        awaitCondition {
-            val updated = transferRepository.findTransferById(transfer.id)
-            updated?.status == TransferStatus.Refunded
-        }
-
-        val updated = transferRepository.findTransferById(transfer.id)!!
-        assertEquals(TransferStatus.Refunded, updated.status)
-    }
-
-    @Test
-    fun `should skip duplicate event and not update transfer twice`() {
-        val transfer = createTransferWithStatus(TransferStatus.PaymentPending)
+    fun `should skip duplicate payout event`() {
+        val transfer = createTransferWithStatus(TransferStatus.PayoutPending)
         val eventId = UUID.randomUUID().toString()
-        val paymentId = UUID.randomUUID()
+        val payoutId = UUID.randomUUID()
 
         val event = """
             {
                 "event_id": "$eventId",
                 "transfer_id": "${transfer.id}",
-                "event_type": "PAYMENT_CAPTURED",
-                "payment_id": "$paymentId",
+                "event_type": "PAYOUT_COMPLETED",
+                "payout_id": "$payoutId",
                 "timestamp": "${Instant.now()}"
             }
         """.trimIndent()
 
         // Send the same event twice
-        kafkaTemplate.send("payments.payment.captured", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
+        kafkaTemplate.send("payouts.payout.completed", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
 
         awaitCondition {
             val updated = transferRepository.findTransferById(transfer.id)
-            updated?.status == TransferStatus.PayoutPending
+            updated?.status == TransferStatus.Completed
         }
 
-        kafkaTemplate.send("payments.payment.captured", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
+        kafkaTemplate.send("payouts.payout.completed", transfer.id.toString(), event).get(5, TimeUnit.SECONDS)
 
         // Wait a bit for the second event to be processed (or skipped)
         Thread.sleep(2000)
 
         val updated = transferRepository.findTransferById(transfer.id)!!
-        assertEquals(TransferStatus.PayoutPending, updated.status)
+        assertEquals(TransferStatus.Completed, updated.status)
 
         // Verify consumed_events has exactly one record for this event
         assertTrue(consumedEventRepository.existsByEventId(eventId))
         val consumedEvent = consumedEventRepository.findById(eventId)
         assertTrue(consumedEvent.isPresent)
         assertEquals("transfer-service", consumedEvent.get().consumerGroup)
-        assertEquals("payments.payment.captured", consumedEvent.get().topic)
+        assertEquals("payouts.payout.completed", consumedEvent.get().topic)
     }
 
     private fun createTransferWithStatus(status: TransferStatus): Transfer {

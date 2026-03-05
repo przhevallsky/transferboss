@@ -20,7 +20,7 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 
 @Component
-class PaymentEventConsumer(
+class PayoutEventConsumer(
     private val transferRepository: TransferRepository,
     private val transferCacheService: TransferCacheService,
     private val consumedEventRepository: ConsumedEventRepository,
@@ -29,29 +29,28 @@ class PaymentEventConsumer(
     private val objectMapper: ObjectMapper
 ) {
 
-    private val log = LoggerFactory.getLogger(PaymentEventConsumer::class.java)
+    private val log = LoggerFactory.getLogger(PayoutEventConsumer::class.java)
 
-    @KafkaListener(topics = ["payments.payment.captured", "payments.payment.failed", "payments.payment.refunded"], groupId = "transfer-service")
+    @KafkaListener(topics = ["payouts.payout.completed", "payouts.payout.failed"], groupId = "transfer-service")
     fun consume(message: String, @Header(KafkaHeaders.RECEIVED_TOPIC) receivedTopic: String) {
         val event = try {
-            objectMapper.readValue(message, PaymentEvent::class.java)
+            objectMapper.readValue(message, PayoutEvent::class.java)
         } catch (e: Exception) {
-            log.error("Failed to deserialize payment event: {}", e.message)
+            log.error("Failed to deserialize payout event: {}", e.message)
             return
         }
 
         try {
             MDC.put("traceId", event.eventId)
 
-            log.info("Received payment event: eventId={}, transferId={}, type={}",
+            log.info("Received payout event: eventId={}, transferId={}, type={}",
                 event.eventId, event.transferId, event.eventType)
 
             val newStatus = when (event.eventType) {
-                "PAYMENT_CAPTURED" -> TransferStatus.PaymentCaptured
-                "PAYMENT_FAILED" -> TransferStatus.PaymentFailed
-                "PAYMENT_REFUNDED" -> TransferStatus.Refunded
+                "PAYOUT_COMPLETED" -> TransferStatus.Completed
+                "PAYOUT_FAILED" -> TransferStatus.Failed
                 else -> {
-                    log.warn("Unknown payment event type: {}", event.eventType)
+                    log.warn("Unknown payout event type: {}", event.eventType)
                     return
                 }
             }
@@ -76,35 +75,34 @@ class PaymentEventConsumer(
                 }
 
                 transfer.transitionTo(newStatus, event.reason)
-                if (event.paymentId != null) {
-                    transfer.paymentId = UUID.fromString(event.paymentId)
+                if (event.payoutId != null) {
+                    transfer.payoutId = UUID.fromString(event.payoutId)
                 }
                 transferRepository.save(transfer)
                 log.info("Transfer {} status updated to {}", transferId, newStatus.value)
 
-                // On PAYMENT_CAPTURED: emit PAYOUT_REQUESTED and transition to PAYOUT_PENDING
-                if (newStatus == TransferStatus.PaymentCaptured) {
-                    val payoutPayload = objectMapper.writeValueAsString(mapOf(
+                // On PAYOUT_FAILED: emit REFUND_REQUESTED and transition to REFUND_PENDING
+                if (newStatus == TransferStatus.Failed) {
+                    val refundPayload = objectMapper.writeValueAsString(mapOf(
                         "event_id" to UUID.randomUUID().toString(),
-                        "event_type" to "PAYOUT_REQUESTED",
+                        "event_type" to "REFUND_REQUESTED",
                         "transfer_id" to transfer.id.toString(),
-                        "recipient_id" to transfer.recipientId.toString(),
-                        "receive_amount" to transfer.receiveAmount.toPlainString(),
-                        "receive_currency" to transfer.receiveCurrency,
-                        "delivery_method" to transfer.deliveryMethod.name,
+                        "payment_id" to transfer.paymentId.toString(),
+                        "refund_amount" to transfer.sendAmount.toPlainString(),
+                        "refund_currency" to transfer.sendCurrency,
                         "idempotency_key" to transfer.idempotencyKey.toString()
                     ))
                     outboxEventRepository.save(OutboxEvent(
                         entityId = transfer.id,
                         entityType = "TRANSFER",
-                        eventType = OutboxEventType.PAYOUT_REQUESTED,
-                        payload = payoutPayload,
+                        eventType = OutboxEventType.REFUND_REQUESTED,
+                        payload = refundPayload,
                         status = OutboxEventStatus.PENDING,
-                        targetTopic = "transfers.payout.requested"
+                        targetTopic = "transfers.payment.refund.requested"
                     ))
-                    transfer.transitionTo(TransferStatus.PayoutPending)
+                    transfer.transitionTo(TransferStatus.RefundPending)
                     transferRepository.save(transfer)
-                    log.info("Transfer {} transitioned to PAYOUT_PENDING, outbox event saved", transferId)
+                    log.info("Transfer {} transitioned to REFUND_PENDING, refund outbox event saved", transferId)
                 }
 
                 consumedEventRepository.save(

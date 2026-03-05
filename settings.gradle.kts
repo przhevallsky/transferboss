@@ -5,4 +5,5 @@ include(
     "services:outbox-service",
     "services:pricing-service",
     "services:mock-payment-service",
+    "services:mock-payout-service",
 )

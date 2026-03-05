@@ -94,6 +94,7 @@ dependencies {
         exclude(module = "mockito-junit-jupiter")
     }
     testImplementation(libs.mockk)
+    testImplementation(libs.springmockk)
     testImplementation(libs.spring.kafka.test)
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.postgresql)

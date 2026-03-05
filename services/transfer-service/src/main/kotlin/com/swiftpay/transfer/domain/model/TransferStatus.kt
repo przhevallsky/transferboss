@@ -43,7 +43,7 @@ sealed class TransferStatus(val value: String) {
         ComplianceHold -> setOf(PaymentPending, ComplianceRejected)
         PaymentPending -> setOf(PaymentCaptured, PaymentFailed)
         PaymentCaptured -> setOf(PayoutPending)
-        PayoutPending -> setOf(Delivering, Failed)
+        PayoutPending -> setOf(Delivering, Completed, Failed)
         Delivering -> setOf(Completed, Failed)
         Failed -> setOf(RefundPending)
         RefundPending -> setOf(Refunded)

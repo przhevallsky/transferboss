@@ -1,3 +1,6 @@
+// Package consumer provides a Kafka consumer loop for notification events.
+// Known limitation: segmentio/kafka-go uses a simple round-robin group balancer
+// and does not support CooperativeStickyAssignor. Rebalances will stop-the-world.
 package consumer
 
 import (

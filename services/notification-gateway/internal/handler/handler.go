@@ -2,8 +2,11 @@ package handler
 
 import (
 	"context"
+	"time"
 
 	"github.com/rs/zerolog/log"
+	"github.com/swiftpay/notification-gateway/internal/metrics"
+	"github.com/swiftpay/notification-gateway/internal/sender"
 )
 
 type NotificationEvent struct {
@@ -18,18 +21,48 @@ type Handler interface {
 	Handle(ctx context.Context, event NotificationEvent) error
 }
 
-type LoggingHandler struct{}
-
-func NewLoggingHandler() *LoggingHandler {
-	return &LoggingHandler{}
+type DeliveryHandler struct {
+	router *sender.Router
 }
 
-func (h *LoggingHandler) Handle(ctx context.Context, event NotificationEvent) error {
+func NewDeliveryHandler(router *sender.Router) *DeliveryHandler {
+	return &DeliveryHandler{router: router}
+}
+
+func (h *DeliveryHandler) Handle(ctx context.Context, event NotificationEvent) error {
 	log.Info().
 		Str("transfer_id", event.TransferID).
-		Str("sender_id", event.SenderID).
 		Str("event_type", event.EventType).
 		Strs("channels", event.Channels).
-		Msg("notification event received")
+		Msg("processing notification event")
+
+	for _, ch := range event.Channels {
+		start := time.Now()
+		n := sender.Notification{
+			TransferID: event.TransferID,
+			SenderID:   event.SenderID,
+			EventType:  event.EventType,
+			Text:       event.NotificationText,
+			Channel:    ch,
+		}
+
+		s, ok := h.router.Get(ch)
+		if !ok {
+			log.Warn().Str("channel", ch).Str("transfer_id", event.TransferID).Msg("unknown delivery channel, skipping")
+			continue
+		}
+
+		err := s.Send(ctx, n)
+		duration := time.Since(start).Seconds()
+		metrics.DeliveryDuration.WithLabelValues(ch).Observe(duration)
+
+		if err != nil {
+			metrics.DeliveryTotal.WithLabelValues(ch, "failure").Inc()
+			log.Error().Err(err).Str("channel", ch).Str("transfer_id", event.TransferID).Msg("delivery failed")
+		} else {
+			metrics.DeliveryTotal.WithLabelValues(ch, "success").Inc()
+		}
+	}
+
 	return nil
 }

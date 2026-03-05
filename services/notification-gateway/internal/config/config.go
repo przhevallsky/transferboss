@@ -12,6 +12,7 @@ type Config struct {
 	ConsumerGroup string
 	LogLevel      string
 	HTTPPort      int
+	MetricsPort   int
 }
 
 func Load() Config {
@@ -21,6 +22,7 @@ func Load() Config {
 		ConsumerGroup: getEnv("CONSUMER_GROUP", "notification-delivery-consumer"),
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 		HTTPPort:      getEnvInt("HTTP_PORT", 8085),
+		MetricsPort:   getEnvInt("METRICS_PORT", 8086),
 	}
 }
 

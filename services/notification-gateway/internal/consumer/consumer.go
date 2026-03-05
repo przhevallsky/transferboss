@@ -7,6 +7,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/segmentio/kafka-go"
 	"github.com/swiftpay/notification-gateway/internal/handler"
+	"github.com/swiftpay/notification-gateway/internal/metrics"
 )
 
 type Consumer struct {
@@ -54,6 +55,8 @@ func (c *Consumer) Run(ctx context.Context) {
 
 		if err := c.reader.CommitMessages(ctx, msg); err != nil {
 			log.Error().Err(err).Msg("failed to commit message")
+		} else {
+			metrics.MessagesProcessed.Inc()
 		}
 	}
 }

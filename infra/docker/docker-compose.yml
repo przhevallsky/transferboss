@@ -267,11 +267,13 @@ services:
         condition: service_healthy
     ports:
       - "8085:8085"
+      - "8086:8086"
     environment:
       KAFKA_BROKERS: transferhub-kafka:29092
       NOTIFICATION_TOPIC: notification.delivery
       LOG_LEVEL: info
       HTTP_PORT: 8085
+      METRICS_PORT: 8086
     networks:
       - transferhub-network
 

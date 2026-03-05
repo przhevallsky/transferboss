@@ -258,6 +258,23 @@ services:
     networks:
       - transferhub-network
 
+  notification-gateway:
+    build:
+      context: ../../services/notification-gateway
+    container_name: transferhub-notification
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8085:8085"
+    environment:
+      KAFKA_BROKERS: transferhub-kafka:29092
+      NOTIFICATION_TOPIC: notification.delivery
+      LOG_LEVEL: info
+      HTTP_PORT: 8085
+    networks:
+      - transferhub-network
+
 networks:
   transferhub-network:
     driver: bridge

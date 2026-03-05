@@ -59,6 +59,7 @@ create_topic "identity.user.blocked"                   3   $SEVEN_DAYS_MS
 # Retry and Dead Letter Topics
 # =============================================
 
+create_topic "notification.delivery"                    6   $SEVEN_DAYS_MS
 create_topic "transfers.notification.retry"            6   $SEVEN_DAYS_MS
 create_topic "transfers.notification.redirect"         3   $SEVEN_DAYS_MS
 create_topic "transfers.payment-consumer.dlt"          3   $SEVEN_DAYS_MS

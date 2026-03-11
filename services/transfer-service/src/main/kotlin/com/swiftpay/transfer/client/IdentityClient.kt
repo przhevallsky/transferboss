@@ -1,5 +1,7 @@
 package com.swiftpay.transfer.client
 
+import com.fasterxml.jackson.databind.PropertyNamingStrategies
+import com.fasterxml.jackson.databind.annotation.JsonNaming
 import com.swiftpay.transfer.exception.IdentityUnavailableException
 import com.swiftpay.transfer.exception.KycRejectedException
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException
@@ -61,6 +63,7 @@ class IdentityClient(
         }
     }
 
+    @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
     private data class KycResponse(
         val userId: String = "",
         val status: String = "",

@@ -1,6 +1,7 @@
 package com.swiftpay.transfer.api.error
 
 import com.swiftpay.transfer.exception.BusinessException
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.core.Ordered
@@ -22,6 +23,44 @@ import java.time.Instant
 class GlobalExceptionHandler {
 
     private val log = LoggerFactory.getLogger(GlobalExceptionHandler::class.java)
+
+    @ExceptionHandler(CallNotPermittedException::class)
+    fun handleCircuitBreakerOpen(
+        ex: CallNotPermittedException,
+        request: WebRequest
+    ): ResponseEntity<ProblemDetail> {
+        val circuitBreakerName = ex.causingCircuitBreakerName
+        log.warn("Circuit breaker open: {}", circuitBreakerName)
+
+        val (errorType, title) = when {
+            circuitBreakerName.contains("pricing") -> Pair(
+                "https://api.transferhub.com/errors/pricing-unavailable",
+                "Pricing Service Unavailable"
+            )
+            circuitBreakerName.contains("identity") -> Pair(
+                "https://api.transferhub.com/errors/identity-unavailable",
+                "Identity Verification Unavailable"
+            )
+            else -> Pair(
+                "https://api.transferhub.com/errors/service-unavailable",
+                "Service Unavailable"
+            )
+        }
+
+        val problem = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE).apply {
+            type = URI.create(errorType)
+            this.title = title
+            detail = "Service temporarily unavailable. Please retry in 30 seconds."
+            instance = extractPath(request)
+            setProperty("traceId", getTraceId())
+            setProperty("timestamp", Instant.now().toString())
+            setProperty("retryAfter", 30)
+        }
+
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .header("Retry-After", "30")
+            .body(problem)
+    }
 
     @ExceptionHandler(BusinessException::class)
     fun handleBusinessException(

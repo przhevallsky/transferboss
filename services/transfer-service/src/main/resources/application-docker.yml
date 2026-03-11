@@ -15,4 +15,4 @@ spring:
 
 grpc:
   pricing:
-    host: pricing-service
+    host: transferhub-pricing

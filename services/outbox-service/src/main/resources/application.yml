@@ -3,9 +3,9 @@ spring:
     name: outbox-service
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/transfer_db
+    url: jdbc:postgresql://localhost:5432/transferhub
     username: transferhub
-    password: transferhub_dev
+    password: transferhub
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 5

@@ -92,6 +92,7 @@ lettuce-core                    = { module = "io.lettuce:lettuce-core",         
 spring-boot-starter-test        = { module = "org.springframework.boot:spring-boot-starter-test" }
 spring-kafka-test               = { module = "org.springframework.kafka:spring-kafka-test" }
 mockk                           = { module = "io.mockk:mockk",                           version.ref = "mockk" }
+springmockk                     = { module = "com.ninja-squad:springmockk",              version = "4.0.2" }
 kotest-assertions-core          = { module = "io.kotest:kotest-assertions-core",          version.ref = "kotest" }
 testcontainers-bom              = { module = "org.testcontainers:testcontainers-bom",               version.ref = "testcontainers" }
 testcontainers-junit            = { module = "org.testcontainers:testcontainers-junit-jupiter",    version.ref = "testcontainers" }

@@ -16,6 +16,12 @@ spring:
   kafka:
     bootstrap-servers: ${spring.embedded.kafka.brokers:localhost:9092}
 
+kafka:
+  retry:
+    delay: 100
+    multiplier: 1.0
+    max-delay: 200
+
   jpa:
     show-sql: true
     properties:

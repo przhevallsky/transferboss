@@ -1,11 +1,15 @@
 package com.swiftpay.transfer.integration
 
+import com.ninjasquad.springmockk.MockkBean
 import com.swiftpay.transfer.IntegrationTestBase
+import com.swiftpay.transfer.client.PricingClient
+import com.swiftpay.transfer.client.QuoteData
 import com.swiftpay.transfer.domain.model.Recipient
 import com.swiftpay.transfer.domain.vo.OutboxEventStatus
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.RecipientRepository
 import com.swiftpay.transfer.repository.TransferRepository
+import io.mockk.every
 import org.junit.jupiter.api.*
 import org.junit.jupiter.api.Assertions.*
 import org.springframework.beans.factory.annotation.Autowired
@@ -16,6 +20,9 @@ import java.util.UUID
 
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 class TransferApiIntegrationTest : IntegrationTestBase() {
+
+    @MockkBean
+    private lateinit var pricingClient: PricingClient
 
     @Autowired
     private lateinit var restTemplate: TestRestTemplate
@@ -33,7 +40,18 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     private val recipientId = UUID.fromString("11111111-1111-1111-1111-111111111111")
 
     @BeforeEach
-    fun seedRecipient() {
+    fun setUp() {
+        every { pricingClient.validateQuote(any()) } returns QuoteData(
+            quoteId = "test-quote",
+            sendAmount = BigDecimal("200.00"),
+            receiveAmount = BigDecimal("11240.00"),
+            exchangeRate = BigDecimal("56.20"),
+            feeAmount = BigDecimal("5.99"),
+            feeCurrency = "USD",
+            sendCurrency = "USD",
+            receiveCurrency = "PHP"
+        )
+
         if (recipientRepository.findRecipientById(recipientId) == null) {
             recipientRepository.save(
                 Recipient(
@@ -87,7 +105,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
         assertNotNull(response.headers.location)
 
         val responseBody = response.body!!
-        assertEquals("CREATED", responseBody["status"])
+        assertEquals("PAYMENT_PENDING", responseBody["status"])
         assertEquals("200.00", responseBody["send_amount"])
         assertEquals("USD", responseBody["send_currency"])
         assertNotNull(responseBody["id"])
@@ -98,10 +116,11 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
         assertNotNull(savedTransfer)
         assertEquals(BigDecimal("200.00").setScale(2), savedTransfer!!.sendAmount.setScale(2))
 
-        // Verify outbox event
+        // Verify outbox events (TRANSFER_CREATED + PAYMENT_REQUESTED)
         val outboxEvents = outboxEventRepository.findByEntityIdOrderByCreatedAtAsc(transferId)
-        assertEquals(1, outboxEvents.size)
+        assertEquals(2, outboxEvents.size)
         assertEquals(OutboxEventStatus.PENDING, outboxEvents[0].status)
+        assertEquals(OutboxEventStatus.PENDING, outboxEvents[1].status)
     }
 
     // ================================================================

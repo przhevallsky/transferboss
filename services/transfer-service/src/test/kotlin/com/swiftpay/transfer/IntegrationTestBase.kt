@@ -1,6 +1,7 @@
 package com.swiftpay.transfer
 
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.kafka.test.context.EmbeddedKafka
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
@@ -9,6 +10,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
+@EmbeddedKafka(partitions = 1, topics = ["payments.payment.captured", "payments.payment.failed", "payments.payment.refunded", "payouts.payout.completed", "payouts.payout.failed"])
 abstract class IntegrationTestBase {
 
     companion object {
@@ -35,7 +37,6 @@ abstract class IntegrationTestBase {
             registry.add("spring.data.redis.host") { redis.host }
             registry.add("spring.data.redis.port") { redis.firstMappedPort }
 
-            registry.add("spring.kafka.bootstrap-servers") { "localhost:19092" }
             registry.add("spring.cloud.consul.enabled") { "false" }
         }
     }

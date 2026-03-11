@@ -10,6 +10,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 data class OutboxProperties(
     /** Polling interval in milliseconds */
     val intervalMs: Long = 500,
+    /** Initial delay before first poll in milliseconds */
+    val initialDelayMs: Long = 500,
     /** Number of records per poll */
     val batchSize: Int = 100,
     /** Kafka topic for transfer events */

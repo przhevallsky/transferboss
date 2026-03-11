@@ -55,6 +55,9 @@ create_topic "payouts.payout.completed"                6   $SEVEN_DAYS_MS
 create_topic "payouts.payout.failed"                   6   $SEVEN_DAYS_MS
 create_topic "identity.user.blocked"                   3   $SEVEN_DAYS_MS
 
+# Topics consumed by Notification Gateway
+create_topic "notification.delivery"                    6   $SEVEN_DAYS_MS
+
 # =============================================
 # Retry and Dead Letter Topics
 # =============================================

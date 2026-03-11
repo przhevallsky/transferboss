@@ -38,6 +38,7 @@ fun Application.module(
     pricingService: PricingService? = null,
     redisClientFactory: RedisClientFactory? = null,
 ) {
+    configureLogging()
     configureSerialization()
     configureMonitoring()
     configureErrorHandling()

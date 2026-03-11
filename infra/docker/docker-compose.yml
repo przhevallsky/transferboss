@@ -142,6 +142,141 @@ services:
     networks:
       - transferhub-network
 
+  # ──────────────────────────────────────────────
+  # Application Services
+  # ──────────────────────────────────────────────
+
+  transfer-service:
+    build:
+      context: ../../
+      dockerfile: services/transfer-service/Dockerfile
+    container_name: transferhub-transfer
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      consul:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://transferhub-postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_DATA_REDIS_HOST: transferhub-redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: transferhub-kafka:29092
+      SPRING_CLOUD_CONSUL_HOST: transferhub-consul
+      SPRING_CLOUD_CONSUL_PORT: 8500
+      PRICING_GRPC_HOST: transferhub-pricing
+      PRICING_GRPC_PORT: 9090
+      SPRING_PROFILES_ACTIVE: docker
+    networks:
+      - transferhub-network
+
+  outbox-service:
+    build:
+      context: ../../
+      dockerfile: services/outbox-service/Dockerfile
+    container_name: transferhub-outbox
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://transferhub-postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: transferhub-kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health/liveness || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - transferhub-network
+
+  pricing-service:
+    build:
+      context: ../../
+      dockerfile: services/pricing-service/Dockerfile
+    container_name: transferhub-pricing
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+      - "9090:9090"
+    environment:
+      REDIS_HOST: transferhub-redis
+      REDIS_PORT: 6379
+      MONGODB_URI: mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@transferhub-mongo:27017
+      MONGODB_DATABASE: pricing
+      GRPC_PORT: 9090
+      SERVER_PORT: 8082
+    networks:
+      - transferhub-network
+
+  mock-payment-service:
+    build:
+      context: ../../
+      dockerfile: services/mock-payment-service/Dockerfile
+    container_name: transferhub-mock-payment
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: transferhub-kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    networks:
+      - transferhub-network
+
+  mock-payout-service:
+    build:
+      context: ../../
+      dockerfile: services/mock-payout-service/Dockerfile
+    container_name: transferhub-mock-payout
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: transferhub-kafka:29092
+      SPRING_PROFILES_ACTIVE: docker
+    networks:
+      - transferhub-network
+
+  notification-gateway:
+    build:
+      context: ../../services/notification-gateway
+    container_name: transferhub-notification
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8085:8085"
+      - "8086:8086"
+    environment:
+      KAFKA_BROKERS: transferhub-kafka:29092
+      NOTIFICATION_TOPIC: notification.delivery
+      LOG_LEVEL: info
+      HTTP_PORT: 8085
+      METRICS_PORT: 8086
+    networks:
+      - transferhub-network
+
 networks:
   transferhub-network:
     driver: bridge

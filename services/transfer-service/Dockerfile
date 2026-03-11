@@ -1,6 +1,8 @@
 # ── Stage 1: Build ──────────────────────────────────────
 FROM eclipse-temurin:21-jdk-alpine AS builder
 
+RUN apk add --no-cache gcompat
+
 WORKDIR /app
 
 # Layer caching: copy build config first (changes rarely)

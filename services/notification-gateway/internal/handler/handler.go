@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -36,6 +38,12 @@ func (h *DeliveryHandler) Handle(ctx context.Context, event NotificationEvent) e
 		Strs("channels", event.Channels).
 		Msg("processing notification event")
 
+	var (
+		attempted int
+		failed    int
+		errs      []error
+	)
+
 	for _, ch := range event.Channels {
 		start := time.Now()
 		n := sender.Notification{
@@ -52,16 +60,23 @@ func (h *DeliveryHandler) Handle(ctx context.Context, event NotificationEvent) e
 			continue
 		}
 
+		attempted++
 		err := s.Send(ctx, n)
 		duration := time.Since(start).Seconds()
 		metrics.DeliveryDuration.WithLabelValues(ch).Observe(duration)
 
 		if err != nil {
+			failed++
+			errs = append(errs, fmt.Errorf("channel %s: %w", ch, err))
 			metrics.DeliveryTotal.WithLabelValues(ch, "failure").Inc()
 			log.Error().Err(err).Str("channel", ch).Str("transfer_id", event.TransferID).Msg("delivery failed")
 		} else {
 			metrics.DeliveryTotal.WithLabelValues(ch, "success").Inc()
 		}
+	}
+
+	if attempted > 0 && failed == attempted {
+		return fmt.Errorf("all %d delivery channels failed: %w", failed, errors.Join(errs...))
 	}
 
 	return nil

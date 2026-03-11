@@ -1,4 +1,4 @@
-.PHONY: build run test lint
+.PHONY: build run test lint clean
 
 build:
 	go build -o bin/notification-gateway ./cmd
@@ -11,3 +11,6 @@ test:
 
 lint:
 	go vet ./...
+
+clean:
+	rm -rf bin/

@@ -96,7 +96,7 @@ func TestDeliveryHandler_UnknownChannel(t *testing.T) {
 	}
 }
 
-func TestDeliveryHandler_SenderError_OtherChannelStillCalled(t *testing.T) {
+func TestDeliveryHandler_PartialFailure_ReturnsNil(t *testing.T) {
 	push := &fakeSender{channel: "push", err: errors.New("FCM unavailable")}
 	sms := &fakeSender{channel: "sms"}
 	router := sender.NewRouter(push, sms)
@@ -108,7 +108,7 @@ func TestDeliveryHandler_SenderError_OtherChannelStillCalled(t *testing.T) {
 		Channels:         []string{"push", "sms"},
 	}
 
-	// Handler returns nil (partial success is OK)
+	// Partial success is OK — no error returned
 	if err := h.Handle(context.Background(), event); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,5 +118,46 @@ func TestDeliveryHandler_SenderError_OtherChannelStillCalled(t *testing.T) {
 	}
 	if len(sms.calls) != 1 {
 		t.Fatalf("expected 1 sms call (despite push failure), got %d", len(sms.calls))
+	}
+}
+
+func TestDeliveryHandler_AllChannelsFail_ReturnsError(t *testing.T) {
+	push := &fakeSender{channel: "push", err: errors.New("FCM unavailable")}
+	sms := &fakeSender{channel: "sms", err: errors.New("SMS gateway down")}
+	router := sender.NewRouter(push, sms)
+	h := handler.NewDeliveryHandler(router)
+
+	event := handler.NotificationEvent{
+		TransferID:       "txn-005",
+		NotificationText: "Transfer update",
+		Channels:         []string{"push", "sms"},
+	}
+
+	err := h.Handle(context.Background(), event)
+	if err == nil {
+		t.Fatal("expected error when all channels fail, got nil")
+	}
+
+	if len(push.calls) != 1 {
+		t.Fatalf("expected 1 push call, got %d", len(push.calls))
+	}
+	if len(sms.calls) != 1 {
+		t.Fatalf("expected 1 sms call, got %d", len(sms.calls))
+	}
+}
+
+func TestDeliveryHandler_SingleChannelFails_ReturnsError(t *testing.T) {
+	push := &fakeSender{channel: "push", err: errors.New("FCM unavailable")}
+	router := sender.NewRouter(push)
+	h := handler.NewDeliveryHandler(router)
+
+	event := handler.NotificationEvent{
+		TransferID: "txn-006",
+		Channels:   []string{"push"},
+	}
+
+	err := h.Handle(context.Background(), event)
+	if err == nil {
+		t.Fatal("expected error when single channel fails, got nil")
 	}
 }

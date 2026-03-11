@@ -90,7 +90,11 @@ class PaymentEventConsumer(
 
                 transfer.transitionTo(newStatus, event.reason)
                 if (event.paymentId != null) {
-                    transfer.paymentId = UUID.fromString(event.paymentId)
+                    transfer.paymentId = try {
+                        UUID.fromString(event.paymentId)
+                    } catch (e: IllegalArgumentException) {
+                        throw NonRetriableConsumerException("Invalid paymentId format: ${event.paymentId}", e)
+                    }
                 }
                 transferRepository.save(transfer)
                 log.info("Transfer {} status updated to {}", transferId, newStatus.value)
@@ -138,8 +142,12 @@ class PaymentEventConsumer(
     }
 
     @DltHandler
-    fun handleDlt(message: String, @Header(KafkaHeaders.RECEIVED_TOPIC) topic: String) {
+    fun handleDlt(
+        message: String,
+        @Header(KafkaHeaders.RECEIVED_TOPIC) topic: String,
+        @Header(KafkaHeaders.EXCEPTION_MESSAGE) exceptionMsg: String?
+    ) {
         dltCounter.increment()
-        log.error("Payment event sent to DLT: topic={}, message={}", topic, message)
+        log.error("Payment event sent to DLT: topic={}, exception={}, message={}", topic, exceptionMsg, message)
     }
 }

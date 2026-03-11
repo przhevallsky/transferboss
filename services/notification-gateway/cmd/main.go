@@ -53,10 +53,13 @@ func main() {
 		Handler: healthMux,
 	}
 
+	serverErrCh := make(chan error, 2)
+
 	go func() {
 		log.Info().Int("port", cfg.HTTPPort).Msg("health HTTP server started")
 		if err := healthSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal().Err(err).Msg("health HTTP server failed")
+			log.Error().Err(err).Msg("health HTTP server failed")
+			serverErrCh <- err
 		}
 	}()
 
@@ -72,7 +75,8 @@ func main() {
 	go func() {
 		log.Info().Int("port", cfg.MetricsPort).Msg("metrics HTTP server started")
 		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal().Err(err).Msg("metrics HTTP server failed")
+			log.Error().Err(err).Msg("metrics HTTP server failed")
+			serverErrCh <- err
 		}
 	}()
 
@@ -86,8 +90,13 @@ func main() {
 
 	go c.Run(ctx)
 
-	<-ctx.Done()
-	log.Info().Msg("shutdown signal received, draining...")
+	select {
+	case <-ctx.Done():
+		log.Info().Msg("shutdown signal received, draining...")
+	case err := <-serverErrCh:
+		log.Error().Err(err).Msg("HTTP server error, initiating shutdown...")
+		stop()
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

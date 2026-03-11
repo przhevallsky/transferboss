@@ -5,15 +5,13 @@ import com.swiftpay.transfer.exception.QuoteExpiredException
 import com.transferhub.pricing.grpc.v1.PricingServiceGrpc
 import com.transferhub.pricing.grpc.v1.ValidateQuoteRequest
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException
-import io.github.resilience4j.circuitbreaker.CircuitBreaker
-import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.grpc.ManagedChannel
 import io.grpc.Status
 import io.grpc.StatusRuntimeException
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
-import java.time.Duration
 import java.util.concurrent.TimeUnit
 
 data class QuoteData(
@@ -28,21 +26,16 @@ data class QuoteData(
 )
 
 @Component
-class PricingClient(pricingChannel: ManagedChannel) {
+class PricingClient(
+    pricingChannel: ManagedChannel,
+    circuitBreakerRegistry: CircuitBreakerRegistry
+) {
 
     private val log = LoggerFactory.getLogger(PricingClient::class.java)
 
     private val stub = PricingServiceGrpc.newBlockingStub(pricingChannel)
 
-    private val circuitBreaker = CircuitBreaker.of(
-        "pricing-service",
-        CircuitBreakerConfig.custom()
-            .failureRateThreshold(50f)
-            .waitDurationInOpenState(Duration.ofSeconds(30))
-            .slidingWindowSize(10)
-            .minimumNumberOfCalls(5)
-            .build()
-    )
+    private val circuitBreaker = circuitBreakerRegistry.circuitBreaker("pricing-service")
 
     fun validateQuote(quoteId: String): QuoteData {
         try {

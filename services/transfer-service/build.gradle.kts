@@ -79,7 +79,8 @@ dependencies {
     implementation(libs.protobuf.kotlin)
 
     // Resilience4j
-    implementation(libs.resilience4j.circuitbreaker)
+    implementation(libs.resilience4j.spring.boot3)
+    implementation(libs.resilience4j.micrometer)
 
     // API Documentation
     implementation(libs.springdoc.openapi.ui)

@@ -2,6 +2,8 @@ package com.swiftpay.transfer.integration
 
 import com.ninjasquad.springmockk.MockkBean
 import com.swiftpay.transfer.IntegrationTestBase
+import com.swiftpay.transfer.client.IdentityClient
+import com.swiftpay.transfer.client.KycStatus
 import com.swiftpay.transfer.client.PricingClient
 import com.swiftpay.transfer.client.QuoteData
 import com.swiftpay.transfer.domain.model.TransferStatus
@@ -27,6 +29,9 @@ class SagaIntegrationTest : IntegrationTestBase() {
     @MockkBean
     private lateinit var pricingClient: PricingClient
 
+    @MockkBean
+    private lateinit var identityClient: IdentityClient
+
     @Autowired
     private lateinit var restTemplate: TestRestTemplate
 
@@ -47,6 +52,11 @@ class SagaIntegrationTest : IntegrationTestBase() {
 
     @BeforeEach
     fun setUp() {
+        every { identityClient.checkKyc(any()) } returns KycStatus(
+            userId = senderId.toString(),
+            status = "APPROVED",
+            kycLevel = "FULL"
+        )
         every { pricingClient.validateQuote(any()) } returns QuoteData(
             quoteId = "test-quote",
             sendAmount = BigDecimal("200.00"),

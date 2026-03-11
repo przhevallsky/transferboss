@@ -102,6 +102,37 @@ grpc:
     host: ${PRICING_GRPC_HOST:localhost}
     port: ${PRICING_GRPC_PORT:50051}
 
+identity:
+  base-url: ${IDENTITY_SERVICE_URL:http://localhost:8080}
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+        minimumNumberOfCalls: 5
+    instances:
+      pricing-service:
+        baseConfig: default
+        slowCallDurationThreshold: 2s
+        slowCallRateThreshold: 80
+        recordExceptions:
+          - io.grpc.StatusRuntimeException
+          - java.util.concurrent.TimeoutException
+        ignoreExceptions:
+          - com.swiftpay.transfer.exception.QuoteExpiredException
+      identity-service:
+        baseConfig: default
+        slowCallDurationThreshold: 1s
+        recordExceptions:
+          - org.springframework.web.client.RestClientException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+
 consul:
   lock:
     enabled: true

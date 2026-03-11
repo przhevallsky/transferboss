@@ -84,6 +84,8 @@ mongodb-driver-kotlin-coroutine = { module = "org.mongodb:mongodb-driver-kotlin-
 
 # ── Resilience4j ────────────────────────────────────────────
 resilience4j-circuitbreaker     = { module = "io.github.resilience4j:resilience4j-circuitbreaker", version.ref = "resilience4j" }
+resilience4j-spring-boot3       = { module = "io.github.resilience4j:resilience4j-spring-boot3",  version.ref = "resilience4j" }
+resilience4j-micrometer         = { module = "io.github.resilience4j:resilience4j-micrometer",     version.ref = "resilience4j" }
 
 # ── Redis ────────────────────────────────────────────────
 lettuce-core                    = { module = "io.lettuce:lettuce-core",                  version.ref = "lettuce" }

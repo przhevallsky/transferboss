@@ -6,6 +6,7 @@ import com.transferhub.pricing.grpc.v1.PricingServiceGrpc
 import com.transferhub.pricing.grpc.v1.ValidateQuoteRequest
 import com.transferhub.pricing.grpc.v1.ValidateQuoteResponse
 import com.transferhub.pricing.grpc.v1.QuoteResponse
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.grpc.ManagedChannel
 import io.grpc.Server
 import io.grpc.Status
@@ -43,7 +44,7 @@ class PricingClientTest {
             .directExecutor()
             .build()
 
-        pricingClient = PricingClient(channel)
+        pricingClient = PricingClient(channel, CircuitBreakerRegistry.ofDefaults())
     }
 
     @AfterEach

@@ -3,6 +3,8 @@ package com.swiftpay.transfer.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.swiftpay.transfer.client.IdentityClient
+import com.swiftpay.transfer.client.KycStatus
 import com.swiftpay.transfer.client.PricingClient
 import com.swiftpay.transfer.client.QuoteData
 import com.swiftpay.transfer.domain.model.*
@@ -38,6 +40,7 @@ class TransferServiceTest {
     private val recipientRepository: RecipientRepository = mockk()
     private val distributedLockService: DistributedLockService = mockk()
     private val pricingClient: PricingClient = mockk()
+    private val identityClient: IdentityClient = mockk()
 
     private val objectMapper = ObjectMapper().apply {
         registerKotlinModule()
@@ -97,6 +100,11 @@ class TransferServiceTest {
         }
 
         every { pricingClient.validateQuote(any()) } returns defaultQuoteData
+        every { identityClient.checkKyc(any()) } returns KycStatus(
+            userId = senderId.toString(),
+            status = "APPROVED",
+            kycLevel = "FULL"
+        )
 
         transferService = TransferService(
             transferRepository = transferRepository,
@@ -104,7 +112,8 @@ class TransferServiceTest {
             recipientRepository = recipientRepository,
             objectMapper = objectMapper,
             distributedLockService = distributedLockService,
-            pricingClient = pricingClient
+            pricingClient = pricingClient,
+            identityClient = identityClient
         )
     }
 

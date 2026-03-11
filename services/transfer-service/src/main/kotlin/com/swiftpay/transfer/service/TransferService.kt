@@ -1,6 +1,7 @@
 package com.swiftpay.transfer.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.swiftpay.transfer.client.IdentityClient
 import com.swiftpay.transfer.client.PricingClient
 import com.swiftpay.transfer.domain.model.*
 import com.swiftpay.transfer.domain.vo.DeliveryMethod
@@ -29,7 +30,8 @@ class TransferService(
     private val recipientRepository: RecipientRepository,
     private val objectMapper: ObjectMapper,
     private val distributedLockService: DistributedLockService,
-    private val pricingClient: PricingClient
+    private val pricingClient: PricingClient,
+    private val identityClient: IdentityClient
 ) {
     private val log = LoggerFactory.getLogger(TransferService::class.java)
 
@@ -85,6 +87,9 @@ class TransferService(
 
             // 4. RESOLVE DELIVERY METHOD
             val deliveryMethod = DeliveryMethod.fromString(command.deliveryMethod)
+
+            // 4a. KYC CHECK via Identity Service
+            identityClient.checkKyc(command.senderId)
 
             // 5. VALIDATE QUOTE via Pricing Service (gRPC)
             val quoteData = pricingClient.validateQuote(command.quoteId.toString())

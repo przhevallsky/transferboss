@@ -1,3 +1,6 @@
+identity:
+  base-url: http://localhost:8080
+
 consul:
   lock:
     enabled: false

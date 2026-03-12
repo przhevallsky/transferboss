@@ -1,0 +1,20 @@
+# Production profile overrides
+# Activate with: SPRING_PROFILES_ACTIVE=prod
+
+springdoc:
+  swagger-ui:
+    enabled: false
+  api-docs:
+    enabled: false
+
+logging:
+  level:
+    com.swiftpay: INFO
+    org.hibernate.SQL: WARN
+    org.springframework.web: INFO
+    org.apache.kafka: WARN
+
+management:
+  endpoint:
+    health:
+      show-details: when-authorized

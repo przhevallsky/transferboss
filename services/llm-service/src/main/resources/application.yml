@@ -7,9 +7,9 @@ spring:
   profiles:
     active: dev
   datasource:
-    url: jdbc:postgresql://localhost:5432/transferhub
-    username: transferhub
-    password: transferhub
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/transferhub}
+    username: ${DB_USERNAME:transferhub}
+    password: ${DB_PASSWORD:transferhub}
   jpa:
     hibernate:
       ddl-auto: validate

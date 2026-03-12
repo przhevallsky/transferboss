@@ -3,9 +3,9 @@ spring:
     name: outbox-service
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/transferhub
-    username: transferhub
-    password: transferhub
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/transferhub}
+    username: ${DB_USERNAME:transferhub}
+    password: ${DB_PASSWORD:transferhub}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 5
@@ -27,7 +27,7 @@ spring:
 
   # Kafka Producer
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     template:
       observation-enabled: true
     producer:
@@ -92,6 +92,6 @@ server:
 logging:
   level:
     root: INFO
-    com.swiftpay: DEBUG
+    com.swiftpay: INFO
     org.springframework.kafka: INFO
     org.apache.kafka: WARN

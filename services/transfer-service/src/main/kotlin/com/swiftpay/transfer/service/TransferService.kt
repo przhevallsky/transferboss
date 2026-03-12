@@ -14,6 +14,7 @@ import com.swiftpay.transfer.sse.TransferStatusPublisher
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.RecipientRepository
 import com.swiftpay.transfer.repository.TransferRepository
+import com.swiftpay.transfer.config.CorridorProperties
 import com.swiftpay.transfer.service.dto.CreateTransferCommand
 import com.swiftpay.transfer.service.dto.TransferWithRecipient
 import org.slf4j.LoggerFactory
@@ -37,25 +38,20 @@ class TransferService(
     private val transferStatusPublisher: TransferStatusPublisher,
     private val feeService: FeeService,
     private val transferMetrics: TransferMetrics,
-    private val transferStatusCache: TransferStatusCache
+    private val transferStatusCache: TransferStatusCache,
+    private val corridorProperties: CorridorProperties
 ) {
     private val log = LoggerFactory.getLogger(TransferService::class.java)
 
-    // --- Поддерживаемые коридоры (MVP: hardcoded, в будущем — из MongoDB/config) ---
-    private val supportedCorridors: Map<String, Set<DeliveryMethod>> = mapOf(
-        "US_PH" to setOf(DeliveryMethod.BANK_DEPOSIT, DeliveryMethod.CASH_PICKUP, DeliveryMethod.MOBILE_WALLET),
-        "US_MX" to setOf(DeliveryMethod.BANK_DEPOSIT, DeliveryMethod.CASH_PICKUP),
-        "GB_IN" to setOf(DeliveryMethod.BANK_DEPOSIT, DeliveryMethod.MOBILE_WALLET),
-        "US_IN" to setOf(DeliveryMethod.BANK_DEPOSIT, DeliveryMethod.MOBILE_WALLET),
-    )
+    private val supportedCorridors: Map<String, Set<DeliveryMethod>> =
+        corridorProperties.corridors.associate { config ->
+            config.corridorId to config.deliveryMethods.split(",")
+                .map { DeliveryMethod.fromString(it.trim()) }
+                .toSet()
+        }
 
-    // --- Минимальные суммы по коридору ---
-    private val minimumAmounts: Map<String, BigDecimal> = mapOf(
-        "US_PH" to BigDecimal("10.00"),
-        "US_MX" to BigDecimal("10.00"),
-        "GB_IN" to BigDecimal("5.00"),
-        "US_IN" to BigDecimal("10.00"),
-    )
+    private val minimumAmounts: Map<String, BigDecimal> =
+        corridorProperties.corridors.associate { it.corridorId to it.minimumAmount }
 
     /**
      * Создание перевода.

@@ -1,93 +1,86 @@
 # Production Checklist — что изменить перед продакшеном
 
-## 1. Аутентификация (КРИТИЧНО)
+## Статус: 7/9 закрыты
 
-**Файл:** `api/controller/TransferController.kt` (строки 52-56, 100-111)
+---
 
-Сейчас `senderId` берётся из хедера `X-Sender-Id` с fallback на хардкод UUID `00000000-0000-0000-0000-000000000001`. Это заглушка для разработки.
+## 1. ~~Аутентификация~~ ✅ (Sprint 5)
 
-**Что сделать:**
-- Подключить Spring Security + JWT (или OAuth2 Resource Server)
-- Извлекать `senderId` из JWT-токена (claim), а не из хедера
-- Убрать `X-Sender-Id` хедер и дефолтный UUID
-- Добавить авторизацию: пользователь может видеть/создавать только свои переводы
+Реализовано: JWT RS256 + RBAC (SENDER/OPERATOR/ADMIN) через Spring Security OAuth2 Resource Server. `senderId` извлекается из JWT subject. Rate limiting через Redis sliding window (100 req/min auth, 20 anon).
 
-## 2. Коридоры и лимиты (ВАЖНО)
+**Файлы:** `SecurityConfig.kt`, `RateLimitFilter.kt`, `AuthController.kt`
 
-**Файл:** `service/TransferService.kt` (строки 37-50)
+## 2. ~~Коридоры и лимиты~~ ✅ (Production Hardening)
 
-Поддерживаемые коридоры и минимальные суммы захардкожены в коде.
+Вынесены в `application.yml` через `@ConfigurationProperties` (`CorridorProperties.kt`). Коридоры и минимальные суммы настраиваются без изменения кода — через env vars или config override.
 
-**Что сделать:**
-- Вынести в MongoDB или конфиг-сервис (Consul KV / Spring Cloud Config)
-- Добавить максимальные суммы и дневные/месячные лимиты
-- Добавить admin API для управления коридорами без редеплоя
+**Файлы:** `CorridorProperties.kt`, `TransferService.kt`, `application.yml` (секция `transfer.corridors`)
 
-## 3. Tracing (УЛУЧШЕНИЕ)
+**Остаётся для полного прода:** admin API для управления коридорами, максимальные суммы, дневные/месячные лимиты.
 
-**Файл:** `config/TraceFilter.kt`
+## 3. ~~Tracing~~ ✅ (Sprint 4-5)
 
-Кастомный TraceFilter — 15 строк, достаточен для MVP, но не для продакшена с микросервисами.
+Реализовано: Micrometer Tracing + OpenTelemetry exporter → Tempo. Автоматическая propagation через HTTP, gRPC, Kafka. Grafana → Tempo интеграция через exemplars.
 
-**Что сделать:**
-- Заменить на Micrometer Tracing (`micrometer-tracing-bridge-otel`)
-- Подключить exporter (Tempo / Jaeger / Zipkin)
-- Получим автоматическую propagation через HTTP, gRPC, Kafka
-- Fallback `MDC.get("trace_id")` в `GlobalExceptionHandler` уже заложен под это
+**Файлы:** `application.yml` (секция `management.tracing`), `build.gradle.kts` (micrometer-tracing-bridge-otel)
 
-## 4. Секреты и конфигурация (КРИТИЧНО)
+## 4. ~~Секреты и конфигурация~~ ✅ (Production Hardening)
 
-**Файл:** `application.yml` (строки 10-12, 36-38)
+Все credentials используют паттерн `${ENV_VAR:dev-default}`:
+- `${DB_URL}`, `${DB_USERNAME}`, `${DB_PASSWORD}` — PostgreSQL
+- `${REDIS_HOST}`, `${REDIS_PORT}` — Redis
+- `${KAFKA_BOOTSTRAP_SERVERS}` — Kafka
+- `${OPENAI_API_KEY}` — OpenAI (llm-service)
 
-Пароли к PostgreSQL и Redis прописаны в открытом виде (`transferhub`/`transferhub`).
+Дефолты сохранены для локальной разработки. В production env vars задаются через Kubernetes Secrets или Vault.
 
-**Что сделать:**
-- Использовать переменные окружения или Vault (HashiCorp Vault / AWS Secrets Manager)
-- Профили Spring: `application-prod.yml` с `${DB_PASSWORD}`, `${REDIS_HOST}` и т.д.
-- Убрать дефолтные значения для чувствительных данных
+**Файлы:** `application.yml` (transfer-service, outbox-service, llm-service)
 
-## 5. Логирование (ВАЖНО)
+## 5. ~~Логирование~~ ✅ (Production Hardening)
 
-**Файл:** `application.yml` (строки 113-117)
+- `com.swiftpay: INFO` (было DEBUG)
+- `org.hibernate.SQL: WARN` (было DEBUG)
+- Structured JSON logging через Logback (PII masking через `PiiMaskingConverter`)
+- `application-prod.yml` дополнительно фиксирует production log levels
 
-`com.swiftpay: DEBUG` и `org.hibernate.SQL: DEBUG` — слишком verbose для продакшена.
+**Файлы:** `application.yml`, `application-prod.yml`, `logback-spring.xml`
 
-**Что сделать:**
-- Поставить `com.swiftpay: INFO`, `org.hibernate.SQL: WARN`
-- Настроить structured logging (JSON формат) для Kibana/Loki
-- Добавить log rotation / size limits
+## 6. ~~Health endpoint~~ ✅ (Production Hardening)
 
-## 6. Health endpoint (БЕЗОПАСНОСТЬ)
+`show-details: when-authorized` во всех сервисах (transfer, outbox, mock-payment, mock-payout). Детали здоровья видны только авторизованным пользователям.
 
-**Файл:** `application.yml` (строка 85)
+**Файлы:** `application.yml` (все сервисы)
 
-`show-details: always` — раскрывает детали о подключениях к БД, Redis, Kafka всем.
+## 7. ~~Swagger UI~~ ✅ (Production Hardening)
 
-**Что сделать:**
-- Поменять на `show-details: when-authorized`
-- Ограничить доступ к actuator endpoints (только внутренняя сеть)
+Отключается в production через `application-prod.yml`:
+```yaml
+springdoc:
+  swagger-ui.enabled: false
+  api-docs.enabled: false
+```
 
-## 7. Swagger UI (БЕЗОПАСНОСТЬ)
+Активация: `SPRING_PROFILES_ACTIVE=prod`
 
-**Файл:** `application.yml` (строки 90-98)
+## 8. @Order на GlobalExceptionHandler — N/A
 
-Swagger UI открыт для всех.
+Не требует действий. `@Order(Ordered.HIGHEST_PRECEDENCE)` не мешает и станет полезной при добавлении второго handler.
 
-**Что сделать:**
-- Отключить в prod-профиле (`springdoc.swagger-ui.enabled: false`)
-- Или ограничить доступ через Spring Security (только для внутреннего использования)
+## 9. Connection pool и таймауты — OPEN (тюнинг под нагрузку)
 
-## 8. @Order на GlobalExceptionHandler (МЕЛОЧЬ)
+Требует нагрузочного тестирования для определения оптимальных значений:
+- HikariCP `maximum-pool-size` — текущее 10, может потребоваться увеличение
+- Kafka `max.poll.records`, `session.timeout.ms`
+- Consul `session-ttl-seconds: 15`
 
-**Файл:** `api/error/GlobalExceptionHandler.kt` (строка 21)
+---
 
-`@Order(Ordered.HIGHEST_PRECEDENCE)` — избыточна пока handler один. Не мешает, но и не нужна. Убрать или оставить — на усмотрение, станет полезной если появится второй handler.
+## Дополнительные findings (Production Hardening scan)
 
-## 9. Connection pool и таймауты (ТЮНИНГ)
-
-**Файл:** `application.yml`
-
-- HikariCP `maximum-pool-size: 10` — может быть мало под нагрузкой, нужен нагрузочный тест
-- Redis `timeout: 2000ms` — проверить, достаточно ли
-- Consul `session-ttl-seconds: 15` — может быть слишком долго для lock'ов под нагрузкой
-- Kafka — добавить настройки `max.poll.records`, `session.timeout.ms` для production load
+| Находка | Статус | Комментарий |
+|---------|--------|-------------|
+| Security headers (X-Frame-Options) | ✅ Fixed | `.headers { frameOptions { deny() } }` в SecurityConfig |
+| Actuator endpoints открыты | Acceptable | Ограничены до health,info,prometheus,metrics. В prod — network policy |
+| CORS не настроен | N/A | Фронтенд отсутствует, API вызывается из backend/mobile |
+| Request size limits | Acceptable | Tomcat defaults (2MB) достаточны для JSON API |
+| HTTPS | N/A | Терминируется на ALB/Ingress level, не в приложении |

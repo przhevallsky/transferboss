@@ -39,10 +39,10 @@ class RateLimitFilter(
             if count < limit then
                 redis.call('ZADD', key, now, now .. '-' .. math.random(1000000))
                 redis.call('EXPIRE', key, window)
-                return {count + 1, limit}
+                return {0, count + 1, limit}
             end
 
-            return {count, limit}
+            return {1, count, limit}
             """.trimIndent(),
             List::class.java
         )
@@ -76,13 +76,14 @@ class RateLimitFilter(
                 limit.toString()
             )
 
-            val currentCount = (result?.get(0) as? Long) ?: 0
-            val maxLimit = (result?.get(1) as? Long) ?: limit.toLong()
+            val denied = (result?.get(0) as? Long) == 1L
+            val currentCount = (result?.get(1) as? Long) ?: 0
+            val maxLimit = (result?.get(2) as? Long) ?: limit.toLong()
 
             response.setHeader("X-RateLimit-Limit", maxLimit.toString())
             response.setHeader("X-RateLimit-Remaining", (maxLimit - currentCount).coerceAtLeast(0).toString())
 
-            if (currentCount > maxLimit) {
+            if (denied) {
                 response.status = HttpStatus.TOO_MANY_REQUESTS.value()
                 response.contentType = MediaType.APPLICATION_PROBLEM_JSON_VALUE
                 response.setHeader("Retry-After", "60")

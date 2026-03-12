@@ -57,7 +57,7 @@ class TransferController(
     ): ResponseEntity<TransferResponse> {
 
         val senderId = jwt?.subject?.let { UUID.fromString(it) }
-            ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
+            ?: throw IllegalStateException("JWT subject is required")
 
         val command = request.toCommand(senderId = senderId, idempotencyKey = idempotencyKey)
         val (result, isNew) = transferService.createTransfer(command)
@@ -113,7 +113,7 @@ class TransferController(
         }
 
         val senderId = jwt?.subject?.let { UUID.fromString(it) }
-            ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
+            ?: throw IllegalStateException("JWT subject is required")
         val (results, nextCursor) = transferService.listTransfers(senderId, cursor, limit)
 
         val items = results.map { it.transfer.toResponse(it.recipient) }

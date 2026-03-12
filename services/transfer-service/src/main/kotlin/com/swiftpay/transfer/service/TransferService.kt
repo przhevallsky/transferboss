@@ -9,6 +9,7 @@ import com.swiftpay.transfer.domain.vo.OutboxEventStatus
 import com.swiftpay.transfer.domain.vo.OutboxEventType
 import com.swiftpay.transfer.exception.*
 import com.swiftpay.transfer.lock.DistributedLockService
+import com.swiftpay.transfer.sse.TransferStatusPublisher
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.RecipientRepository
 import com.swiftpay.transfer.repository.TransferRepository
@@ -31,7 +32,9 @@ class TransferService(
     private val objectMapper: ObjectMapper,
     private val distributedLockService: DistributedLockService,
     private val pricingClient: PricingClient,
-    private val identityClient: IdentityClient
+    private val identityClient: IdentityClient,
+    private val transferStatusPublisher: TransferStatusPublisher,
+    private val feeService: FeeService
 ) {
     private val log = LoggerFactory.getLogger(TransferService::class.java)
 
@@ -91,8 +94,11 @@ class TransferService(
             // 4a. KYC CHECK via Identity Service
             identityClient.checkKyc(command.senderId)
 
-            // 5. VALIDATE QUOTE via Pricing Service (gRPC)
-            val quoteData = pricingClient.validateQuote(command.quoteId.toString())
+            // 5. VALIDATE QUOTE via Pricing Service (gRPC) + apply fee strategy (feature flag)
+            val quoteData = feeService.applyFeeStrategy(
+                command.senderId,
+                pricingClient.validateQuote(command.quoteId.toString())
+            )
 
             // 5a. Validate currency consistency between quote and request
             if (quoteData.sendCurrency != command.sendCurrency || quoteData.receiveCurrency != command.receiveCurrency) {
@@ -150,6 +156,8 @@ class TransferService(
 
             savedTransfer.transitionTo(TransferStatus.PaymentPending)
             transferRepository.save(savedTransfer)
+
+            transferStatusPublisher.publishStatusChange(savedTransfer.id, TransferStatus.PaymentPending.value, TransferStatus.Created.value)
 
             log.info(
                 "Transfer created: id={}, sender={}, corridor={}→{}, amount={} {}, status={}, idempotencyKey={}",

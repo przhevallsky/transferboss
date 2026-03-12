@@ -53,6 +53,8 @@ dependencies {
     implementation(libs.spring.boot.starter.web)
     implementation(libs.spring.boot.starter.data.jpa)
     implementation(libs.spring.boot.starter.data.redis)
+    implementation(libs.spring.boot.starter.data.redis.reactive)
+    implementation(libs.spring.boot.starter.webflux)
     implementation(libs.spring.boot.starter.actuator)
     implementation(libs.spring.boot.starter.validation)
 
@@ -81,6 +83,9 @@ dependencies {
     // Resilience4j
     implementation(libs.resilience4j.spring.boot3)
     implementation(libs.resilience4j.micrometer)
+
+    // Feature Flags
+    implementation(libs.unleash.client)
 
     // API Documentation
     implementation(libs.springdoc.openapi.ui)

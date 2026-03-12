@@ -1,6 +1,13 @@
 identity:
   base-url: http://localhost:8080
 
+unleash:
+  api-url: http://localhost:4242/api
+  api-token: test-token
+  app-name: transfer-service
+  environment: test
+  fetch-toggles-interval: 1
+
 consul:
   lock:
     enabled: false

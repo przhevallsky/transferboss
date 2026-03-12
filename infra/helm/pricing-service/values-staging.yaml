@@ -1,0 +1,21 @@
+replicaCount: 2
+
+image:
+  tag: staging
+
+resources:
+  requests:
+    memory: "384Mi"
+    cpu: "200m"
+  limits:
+    memory: "768Mi"
+    cpu: "750m"
+
+redis:
+  host: "redis-staging"
+  port: 6379
+
+hpa:
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilization: 55

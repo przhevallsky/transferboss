@@ -1,0 +1,5 @@
+apiVersion: v2
+name: notification-gateway
+version: 0.1.0
+appVersion: "1.0.0"
+description: Go-based notification delivery gateway — Kafka consumer with webhook dispatch

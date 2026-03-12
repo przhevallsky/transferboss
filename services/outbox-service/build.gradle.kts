@@ -33,6 +33,8 @@ dependencies {
 
     // Observability
     implementation(libs.micrometer.prometheus)
+    implementation(libs.micrometer.tracing.bridge.otel)
+    implementation(libs.opentelemetry.exporter.otlp)
     implementation(libs.logstash.logback)
 
     // Tests

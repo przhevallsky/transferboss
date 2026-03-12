@@ -1,0 +1,20 @@
+replicaCount: 2
+
+image:
+  tag: staging
+
+resources:
+  requests:
+    memory: "64Mi"
+    cpu: "50m"
+  limits:
+    memory: "128Mi"
+    cpu: "250m"
+
+kafka:
+  bootstrapServers: "kafka-staging:9092"
+
+hpa:
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilization: 55

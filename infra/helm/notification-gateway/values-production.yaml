@@ -1,0 +1,20 @@
+replicaCount: 3
+
+image:
+  tag: production
+
+resources:
+  requests:
+    memory: "64Mi"
+    cpu: "100m"
+  limits:
+    memory: "128Mi"
+    cpu: "500m"
+
+kafka:
+  bootstrapServers: "kafka-production:9092"
+
+hpa:
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilization: 50

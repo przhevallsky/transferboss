@@ -1,0 +1,21 @@
+replicaCount: 3
+
+image:
+  tag: production
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "1000m"
+
+redis:
+  host: "redis-production"
+  port: 6379
+
+hpa:
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilization: 50

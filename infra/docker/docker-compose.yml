@@ -200,6 +200,7 @@ services:
       PRICING_GRPC_PORT: 9090
       UNLEASH_API_URL: http://transferhub-unleash:4242/api
       UNLEASH_API_TOKEN: "default:development.unleash-insecure-client-token"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://transferhub-tempo:4318/v1/traces
       SPRING_PROFILES_ACTIVE: docker
     networks:
       - transferhub-network
@@ -221,6 +222,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: transferhub-kafka:29092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://transferhub-tempo:4318/v1/traces
       SPRING_PROFILES_ACTIVE: docker
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health/liveness || exit 1"]
@@ -304,6 +306,119 @@ services:
     networks:
       - transferhub-network
 
+  # ──────────────────────────────────────────────
+  # Monitoring Stack (profile: monitoring)
+  # docker compose --profile monitoring up
+  # ──────────────────────────────────────────────
+
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: transferhub-prometheus
+    profiles: ["monitoring"]
+    ports:
+      - "9091:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--enable-feature=exemplar-storage"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - transferhub-network
+
+  grafana:
+    image: grafana/grafana:10.3.0
+    container_name: transferhub-grafana
+    profiles: ["monitoring"]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: grafana
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    networks:
+      - transferhub-network
+
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: transferhub-loki
+    profiles: ["monitoring"]
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ../monitoring/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    networks:
+      - transferhub-network
+
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: transferhub-promtail
+    profiles: ["monitoring"]
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ../monitoring/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks:
+      - transferhub-network
+
+  tempo:
+    image: grafana/tempo:2.3.1
+    container_name: transferhub-tempo
+    profiles: ["monitoring"]
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+      - "4318:4318"
+    command: -config.file=/etc/tempo/tempo-config.yml
+    volumes:
+      - ../monitoring/tempo/tempo-config.yml:/etc/tempo/tempo-config.yml:ro
+      - tempo-data:/var/tempo
+    networks:
+      - transferhub-network
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: transferhub-alertmanager
+    profiles: ["monitoring"]
+    ports:
+      - "9093:9093"
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    volumes:
+      - ../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - transferhub-network
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: transferhub-kafka-exporter
+    profiles: ["monitoring"]
+    ports:
+      - "9308:9308"
+    command:
+      - "--kafka.server=transferhub-kafka:29092"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - transferhub-network
+
 networks:
   transferhub-network:
     driver: bridge
@@ -314,3 +429,7 @@ volumes:
   redis-data:
   kafka-data:
   consul-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  tempo-data:

@@ -207,6 +207,11 @@ class GlobalExceptionHandler {
         return ResponseEntity.status(ex.statusCode).body(problem)
     }
 
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException::class)
+    fun handleAccessDenied(ex: org.springframework.security.access.AccessDeniedException) {
+        throw ex // re-throw so Spring Security's AccessDeniedHandler handles it
+    }
+
     @ExceptionHandler(Exception::class)
     fun handleGenericException(
         ex: Exception,

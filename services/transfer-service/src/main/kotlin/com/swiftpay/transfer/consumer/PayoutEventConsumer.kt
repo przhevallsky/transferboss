@@ -12,6 +12,7 @@ import com.swiftpay.transfer.repository.ConsumedEventRepository
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.TransferRepository
 import com.swiftpay.transfer.service.TransferCacheService
+import com.swiftpay.transfer.service.TransferMetrics
 import com.swiftpay.transfer.sse.TransferStatusPublisher
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
@@ -38,6 +39,7 @@ class PayoutEventConsumer(
     private val transactionTemplate: TransactionTemplate,
     private val objectMapper: ObjectMapper,
     private val transferStatusPublisher: TransferStatusPublisher,
+    private val transferMetrics: TransferMetrics,
     meterRegistry: MeterRegistry
 ) {
 
@@ -143,6 +145,24 @@ class PayoutEventConsumer(
                 transferStatusPublisher.publishStatusChange(transferId, newStatus.value, previousStatus!!)
                 if (secondaryTransition) {
                     transferStatusPublisher.publishStatusChange(transferId, TransferStatus.RefundPending.value, newStatus.value)
+                }
+
+                val transfer = transferRepository.findTransferById(transferId)
+                if (transfer != null) {
+                    val corridor = "${transfer.sourceCountry}_${transfer.destCountry}"
+                    when (newStatus) {
+                        TransferStatus.Completed -> {
+                            transferMetrics.recordTransferCompleted(corridor)
+                            if (transfer.completedAt != null) {
+                                val durationSeconds = java.time.Duration.between(transfer.createdAt, transfer.completedAt).seconds.toDouble()
+                                transferMetrics.recordTransferCompletionTime(durationSeconds, corridor)
+                            }
+                        }
+                        TransferStatus.Failed -> {
+                            transferMetrics.recordTransferFailed(corridor, event.reason ?: "unknown")
+                        }
+                        else -> {}
+                    }
                 }
             }
         } finally {

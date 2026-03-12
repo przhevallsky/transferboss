@@ -1,0 +1,102 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "JVM Heap Memory by Service",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "jvm_memory_used_bytes{area=\"heap\"} / 1024 / 1024",
+          "legendFormat": "{{application}} — {{id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "decmbytes" }
+      }
+    },
+    {
+      "title": "JVM Heap Max vs Used",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(jvm_memory_used_bytes{area=\"heap\"}) by (application) / sum(jvm_memory_max_bytes{area=\"heap\"}) by (application) * 100",
+          "legendFormat": "{{application}} heap %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 85 }] } }
+      }
+    },
+    {
+      "title": "GC Pause Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(jvm_gc_pause_seconds_sum[5m]) / rate(jvm_gc_pause_seconds_count[5m])",
+          "legendFormat": "{{application}} — {{cause}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    },
+    {
+      "title": "HikariCP Active / Pending Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "hikaricp_connections_active{application=~\"transfer-service|outbox-service\"}",
+          "legendFormat": "{{application}} active"
+        },
+        {
+          "expr": "hikaricp_connections_pending{application=~\"transfer-service|outbox-service\"}",
+          "legendFormat": "{{application}} pending"
+        }
+      ]
+    },
+    {
+      "title": "Go Goroutines (notification-gateway)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "go_goroutines{job=\"notification-gateway\"}",
+          "legendFormat": "goroutines"
+        }
+      ]
+    },
+    {
+      "title": "Go Memory (notification-gateway)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "go_memstats_alloc_bytes{job=\"notification-gateway\"} / 1024 / 1024",
+          "legendFormat": "alloc MB"
+        },
+        {
+          "expr": "go_memstats_sys_bytes{job=\"notification-gateway\"} / 1024 / 1024",
+          "legendFormat": "sys MB"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "decmbytes" }
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["infrastructure", "jvm"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "Infrastructure — JVM, HikariCP, Go",
+  "uid": "infrastructure-overview"
+}

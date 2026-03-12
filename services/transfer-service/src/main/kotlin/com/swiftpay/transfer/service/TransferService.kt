@@ -34,7 +34,8 @@ class TransferService(
     private val pricingClient: PricingClient,
     private val identityClient: IdentityClient,
     private val transferStatusPublisher: TransferStatusPublisher,
-    private val feeService: FeeService
+    private val feeService: FeeService,
+    private val transferMetrics: TransferMetrics
 ) {
     private val log = LoggerFactory.getLogger(TransferService::class.java)
 
@@ -167,6 +168,10 @@ class TransferService(
                 savedTransfer.status.value,
                 savedTransfer.idempotencyKey
             )
+
+            val corridor = "${savedTransfer.sourceCountry}_${savedTransfer.destCountry}"
+            transferMetrics.recordTransferCreated(corridor, savedTransfer.deliveryMethod.name)
+            transferMetrics.recordQuoteCreated()
 
             Pair(TransferWithRecipient(savedTransfer, recipient), true)
         }

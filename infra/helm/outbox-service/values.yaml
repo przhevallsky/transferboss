@@ -1,0 +1,27 @@
+replicaCount: 1
+
+image:
+  repository: registry.gitlab.com/transferhub/outbox-service
+  tag: latest
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+spring:
+  profile: dev
+
+database:
+  url: "jdbc:postgresql://postgres:5432/transferhub"
+
+kafka:
+  bootstrapServers: "kafka:9092"
+
+hpa:
+  minReplicas: 1
+  maxReplicas: 3
+  consumerLagThreshold: 1000

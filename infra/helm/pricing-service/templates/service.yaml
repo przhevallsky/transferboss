@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-pricing-service
+spec:
+  selector:
+    app: pricing-service
+  ports:
+    - name: grpc
+      port: {{ .Values.grpc.port }}
+      targetPort: {{ .Values.grpc.port }}
+    - name: http
+      port: {{ .Values.http.port }}
+      targetPort: {{ .Values.http.port }}
+  type: ClusterIP

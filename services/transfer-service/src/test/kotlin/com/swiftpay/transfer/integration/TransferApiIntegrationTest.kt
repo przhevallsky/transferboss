@@ -11,6 +11,7 @@ import com.swiftpay.transfer.domain.vo.OutboxEventStatus
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.RecipientRepository
 import com.swiftpay.transfer.repository.TransferRepository
+import com.swiftpay.transfer.security.TestJwtHelper
 import io.mockk.every
 import org.junit.jupiter.api.*
 import org.junit.jupiter.api.Assertions.*
@@ -43,6 +44,11 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
 
     private val senderId = UUID.fromString("00000000-0000-0000-0000-000000000001")
     private val recipientId = UUID.fromString("11111111-1111-1111-1111-111111111111")
+    private val jwtToken = TestJwtHelper.senderToken(senderId.toString())
+
+    private fun authHeaders(): HttpHeaders = HttpHeaders().apply {
+        setBearerAuth(jwtToken)
+    }
 
     @BeforeEach
     fun setUp() {
@@ -85,7 +91,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     fun `POST transfers should create transfer and return 201`() {
         val idempotencyKey = UUID.randomUUID()
 
-        val headers = HttpHeaders().apply {
+        val headers = authHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("X-Idempotency-Key", idempotencyKey.toString())
             set("X-Sender-Id", senderId.toString())
@@ -142,7 +148,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     fun `POST with same idempotency key should return 200 with same result`() {
         val idempotencyKey = UUID.randomUUID()
 
-        val headers = HttpHeaders().apply {
+        val headers = authHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("X-Idempotency-Key", idempotencyKey.toString())
             set("X-Sender-Id", senderId.toString())
@@ -181,7 +187,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     @Test
     @Order(3)
     fun `POST with missing fields should return 400 with violations`() {
-        val headers = HttpHeaders().apply {
+        val headers = authHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("X-Idempotency-Key", UUID.randomUUID().toString())
             set("X-Sender-Id", senderId.toString())
@@ -204,7 +210,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     @Test
     @Order(4)
     fun `POST with negative amount should return 400`() {
-        val headers = HttpHeaders().apply {
+        val headers = authHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("X-Idempotency-Key", UUID.randomUUID().toString())
             set("X-Sender-Id", senderId.toString())
@@ -237,7 +243,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     @Test
     @Order(5)
     fun `POST with unsupported corridor should return 422`() {
-        val headers = HttpHeaders().apply {
+        val headers = authHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("X-Idempotency-Key", UUID.randomUUID().toString())
             set("X-Sender-Id", senderId.toString())
@@ -270,7 +276,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     @Test
     @Order(6)
     fun `POST without X-Idempotency-Key should return 400`() {
-        val headers = HttpHeaders().apply {
+        val headers = authHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("X-Sender-Id", senderId.toString())
         }
@@ -304,8 +310,8 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     fun `GET transfer by ID should return 200`() {
         val transferId = createTestTransfer()
 
-        val response = restTemplate.getForEntity(
-            "/api/v1/transfers/$transferId", Map::class.java
+        val response = restTemplate.exchange(
+            "/api/v1/transfers/$transferId", HttpMethod.GET, HttpEntity<Void>(authHeaders()), Map::class.java
         )
 
         assertEquals(HttpStatus.OK, response.statusCode)
@@ -315,8 +321,8 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     @Test
     @Order(8)
     fun `GET non-existent transfer should return 404`() {
-        val response = restTemplate.getForEntity(
-            "/api/v1/transfers/${UUID.randomUUID()}", Map::class.java
+        val response = restTemplate.exchange(
+            "/api/v1/transfers/${UUID.randomUUID()}", HttpMethod.GET, HttpEntity<Void>(authHeaders()), Map::class.java
         )
 
         assertEquals(HttpStatus.NOT_FOUND, response.statusCode)
@@ -327,8 +333,8 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     fun `GET transfer second time should return same data from cache`() {
         val transferId = createTestTransfer()
 
-        val response1 = restTemplate.getForEntity("/api/v1/transfers/$transferId", Map::class.java)
-        val response2 = restTemplate.getForEntity("/api/v1/transfers/$transferId", Map::class.java)
+        val response1 = restTemplate.exchange("/api/v1/transfers/$transferId", HttpMethod.GET, HttpEntity<Void>(authHeaders()), Map::class.java)
+        val response2 = restTemplate.exchange("/api/v1/transfers/$transferId", HttpMethod.GET, HttpEntity<Void>(authHeaders()), Map::class.java)
 
         assertEquals(HttpStatus.OK, response1.statusCode)
         assertEquals(HttpStatus.OK, response2.statusCode)
@@ -344,7 +350,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     fun `GET transfers list should return paginated results`() {
         repeat(3) { createTestTransfer() }
 
-        val headers = HttpHeaders().apply {
+        val headers = authHeaders().apply {
             set("X-Sender-Id", senderId.toString())
         }
 
@@ -368,7 +374,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     @Test
     @Order(11)
     fun `GET transfers with cursor should return next page without overlap`() {
-        val headers = HttpHeaders().apply {
+        val headers = authHeaders().apply {
             set("X-Sender-Id", senderId.toString())
         }
 
@@ -402,7 +408,7 @@ class TransferApiIntegrationTest : IntegrationTestBase() {
     // ================================================================
 
     private fun createTestTransfer(): UUID {
-        val headers = HttpHeaders().apply {
+        val headers = authHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
             set("X-Idempotency-Key", UUID.randomUUID().toString())
             set("X-Sender-Id", senderId.toString())

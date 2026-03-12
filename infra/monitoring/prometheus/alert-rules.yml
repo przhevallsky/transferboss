@@ -1,0 +1,93 @@
+groups:
+  - name: transfer-service
+    rules:
+      - alert: HighErrorRate
+        expr: >
+          100 * sum(rate(http_server_requests_seconds_count{application="transfer-service",status=~"5.."}[5m]))
+          / sum(rate(http_server_requests_seconds_count{application="transfer-service"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: transfer-service
+        annotations:
+          summary: "Transfer Service error rate above 1%"
+          description: "Error rate is {{ $value | printf \"%.1f\" }}% over the last 5 minutes."
+
+      - alert: CriticalErrorRate
+        expr: >
+          100 * sum(rate(http_server_requests_seconds_count{application="transfer-service",status=~"5.."}[2m]))
+          / sum(rate(http_server_requests_seconds_count{application="transfer-service"}[2m])) > 5
+        for: 2m
+        labels:
+          severity: critical
+          service: transfer-service
+        annotations:
+          summary: "Transfer Service critical error rate above 5%"
+          description: "Error rate is {{ $value | printf \"%.1f\" }}% over the last 2 minutes."
+
+      - alert: HighLatency
+        expr: >
+          histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{application="transfer-service"}[5m])) by (le)) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: transfer-service
+        annotations:
+          summary: "Transfer Service p99 latency above 500ms"
+          description: "p99 latency is {{ $value | printf \"%.3f\" }}s."
+
+      - alert: CircuitBreakerOpen
+        expr: resilience4j_circuitbreaker_state{application="transfer-service",state="open"} == 1
+        for: 0m
+        labels:
+          severity: warning
+          service: transfer-service
+        annotations:
+          summary: "Circuit breaker {{ $labels.name }} is OPEN"
+          description: "Circuit breaker {{ $labels.name }} opened, downstream service may be unhealthy."
+
+  - name: kafka
+    rules:
+      - alert: HighConsumerLag
+        expr: kafka_consumergroup_lag > 10000
+        for: 5m
+        labels:
+          severity: warning
+          service: kafka
+        annotations:
+          summary: "Consumer group {{ $labels.group }} lag above 10K"
+          description: "Lag for {{ $labels.group }}/{{ $labels.topic }}[{{ $labels.partition }}] is {{ $value }}."
+
+      - alert: CriticalConsumerLag
+        expr: kafka_consumergroup_lag > 50000
+        for: 10m
+        labels:
+          severity: critical
+          service: kafka
+        annotations:
+          summary: "Consumer group {{ $labels.group }} lag above 50K"
+          description: "Lag for {{ $labels.group }}/{{ $labels.topic }}[{{ $labels.partition }}] is {{ $value }}."
+
+      - alert: DLTMessagesPresent
+        expr: increase(kafka_dlt_messages_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          service: kafka
+        annotations:
+          summary: "DLT messages detected on {{ $labels.topic }}"
+          description: "{{ $value }} messages sent to Dead Letter Topic in the last 5 minutes."
+
+  - name: infrastructure
+    rules:
+      - alert: HighMemoryUsage
+        expr: >
+          sum(jvm_memory_used_bytes{area="heap"}) by (application)
+          / sum(jvm_memory_max_bytes{area="heap"}) by (application) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: "{{ $labels.application }}"
+        annotations:
+          summary: "{{ $labels.application }} JVM heap usage above 80%"
+          description: "Heap usage is {{ $value | printf \"%.1f\" }}%."

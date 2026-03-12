@@ -11,7 +11,7 @@ services:
   # PostgreSQL 16 — Relational storage
   # ──────────────────────────────────────────────
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: transferhub-postgres
     ports:
       - "5432:5432"
@@ -168,6 +168,30 @@ services:
       - transferhub-network
 
   # ──────────────────────────────────────────────
+  # ClickHouse — Analytics OLAP database
+  # ──────────────────────────────────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1
+    container_name: transferhub-clickhouse
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init/:/docker-entrypoint-initdb.d/
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - transferhub-network
+
+  # ──────────────────────────────────────────────
   # Application Services
   # ──────────────────────────────────────────────
 
@@ -306,6 +330,46 @@ services:
     networks:
       - transferhub-network
 
+  llm-service:
+    build:
+      context: ../../
+      dockerfile: services/llm-service/Dockerfile
+    container_name: transferhub-llm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8087:8087"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://transferhub-postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-mock-key}
+      SPRING_PROFILES_ACTIVE: dev
+    networks:
+      - transferhub-network
+
+  analytics-etl:
+    build:
+      context: ../../
+      dockerfile: services/analytics-etl/Dockerfile
+    container_name: transferhub-analytics-etl
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    ports:
+      - "8088:8088"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: transferhub-kafka:29092
+      CLICKHOUSE_URL: jdbc:ch://transferhub-clickhouse:8123/default
+      CLICKHOUSE_USERNAME: default
+      CLICKHOUSE_PASSWORD: ""
+      SPRING_PROFILES_ACTIVE: docker
+    networks:
+      - transferhub-network
+
   # ──────────────────────────────────────────────
   # Monitoring Stack (profile: monitoring)
   # docker compose --profile monitoring up
@@ -340,6 +404,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: grafana
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
     volumes:
       - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -348,6 +413,7 @@ services:
       - prometheus
       - loki
       - tempo
+      - clickhouse
     networks:
       - transferhub-network
 
@@ -432,4 +498,5 @@ volumes:
   prometheus-data:
   grafana-data:
   loki-data:
+  clickhouse-data:
   tempo-data:

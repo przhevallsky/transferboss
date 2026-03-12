@@ -17,6 +17,11 @@ management:
     enabled: false
 
 spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          public-key-location: classpath:keys/public.pem
   main:
     allow-bean-definition-overriding: true
   autoconfigure:

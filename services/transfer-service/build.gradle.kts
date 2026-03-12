@@ -87,6 +87,13 @@ dependencies {
     // Feature Flags
     implementation(libs.unleash.client)
 
+    // Security
+    implementation(libs.spring.boot.starter.security)
+    implementation(libs.spring.boot.starter.oauth2.resource)
+    implementation(libs.jjwt.api)
+    runtimeOnly(libs.jjwt.impl)
+    runtimeOnly(libs.jjwt.jackson)
+
     // API Documentation
     implementation(libs.springdoc.openapi.ui)
 
@@ -107,6 +114,7 @@ dependencies {
     testImplementation(libs.testcontainers.junit)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.testcontainers.kafka)
+    testImplementation(libs.spring.security.test)
     testImplementation(libs.grpc.inprocess)
 }
 

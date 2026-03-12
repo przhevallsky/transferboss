@@ -54,6 +54,14 @@ flyway-core                     = { module = "org.flywaydb:flyway-core",        
 flyway-postgres                 = { module = "org.flywaydb:flyway-database-postgresql",   version.ref = "flyway" }
 postgresql                      = { module = "org.postgresql:postgresql" }
 
+# ── Security ────────────────────────────────────────────
+spring-boot-starter-security          = { module = "org.springframework.boot:spring-boot-starter-security" }
+spring-boot-starter-oauth2-resource   = { module = "org.springframework.boot:spring-boot-starter-oauth2-resource-server" }
+spring-security-test                  = { module = "org.springframework.security:spring-security-test" }
+jjwt-api                              = { module = "io.jsonwebtoken:jjwt-api",  version = "0.12.6" }
+jjwt-impl                             = { module = "io.jsonwebtoken:jjwt-impl", version = "0.12.6" }
+jjwt-jackson                          = { module = "io.jsonwebtoken:jjwt-jackson", version = "0.12.6" }
+
 # ── Observability ────────────────────────────────────────
 logstash-logback                = { module = "net.logstash.logback:logstash-logback-encoder", version = "7.4" }
 micrometer-prometheus           = { module = "io.micrometer:micrometer-registry-prometheus", version.ref = "micrometer" }

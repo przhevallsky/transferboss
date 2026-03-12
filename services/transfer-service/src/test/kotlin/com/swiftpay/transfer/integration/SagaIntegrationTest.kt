@@ -7,6 +7,7 @@ import com.swiftpay.transfer.client.KycStatus
 import com.swiftpay.transfer.client.PricingClient
 import com.swiftpay.transfer.client.QuoteData
 import com.swiftpay.transfer.domain.model.TransferStatus
+import com.swiftpay.transfer.security.TestJwtHelper
 import com.swiftpay.transfer.domain.vo.OutboxEventType
 import com.swiftpay.transfer.repository.ConsumedEventRepository
 import com.swiftpay.transfer.repository.OutboxEventRepository
@@ -257,6 +258,7 @@ class SagaIntegrationTest : IntegrationTestBase() {
     private fun createTransferViaApi(): UUID {
         val headers = HttpHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
+            setBearerAuth(TestJwtHelper.senderToken(senderId.toString()))
             set("X-Idempotency-Key", UUID.randomUUID().toString())
             set("X-Sender-Id", senderId.toString())
         }

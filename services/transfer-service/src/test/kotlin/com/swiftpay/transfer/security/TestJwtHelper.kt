@@ -43,7 +43,7 @@ object TestJwtHelper {
     fun senderToken(senderId: String = "00000000-0000-0000-0000-000000000001"): String =
         generateToken(senderId, listOf("SENDER"))
 
-    fun operatorToken(userId: String = "operator-1"): String =
+    fun operatorToken(userId: String = "99999999-9999-9999-9999-999999999999"): String =
         generateToken(userId, listOf("OPERATOR"))
 
     fun expiredToken(userId: String = "00000000-0000-0000-0000-000000000001"): String =

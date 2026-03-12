@@ -354,3 +354,383 @@ Transfer Service вызывает Pricing Service синхронно на кри
 - Почему отказались: дополнительная инфраструктура (Debezium Connect), сложнее дебажить (WAL → Kafka mapping), наша команда лучше знает Spring Kafka, чем Debezium. Для масштаба TransferHub Outbox Pattern достаточен.
 
 Реализация: `OutboxPollingScheduler` с `FOR UPDATE SKIP LOCKED` — позволяет нескольким инстансам Outbox Service работать параллельно без contention. Batch size 100, interval 500ms — compromise между latency и throughput.
+
+---
+
+## Секция 3: Kafka и обмен сообщениями
+
+### Q21. «Как гарантируете порядок сообщений в Kafka?»
+
+Ordering в Kafka гарантируется **внутри одной партиции**. Наш подход: Kafka key = transfer_id. Все события для одного перевода (CREATED → PAYMENT_CAPTURED → COMPLETED) попадают в одну партицию → consumer читает их строго по порядку.
+
+Outbox Service группирует события по `entity_id` (который равен transfer_id) перед отправкой — `OutboxPublisher` использует `entity_id` как Kafka key в `ProducerRecord`. Это критично: если бы key был случайным, события для одного перевода разлетелись бы по разным партициям, и consumer мог бы обработать COMPLETED раньше PAYMENT_CAPTURED.
+
+Для notification-топиков ordering ещё критичнее: уведомление «Перевод завершён» не должно приходить раньше «Оплата подтверждена». Здесь мы столкнулись с проблемой: `@RetryableTopic` нарушает ordering при retry (Event A уходит в retry-topic, Event B обрабатывается сразу). Решили через Redirect & Retry Pattern (см. Q22).
+
+Trade-off: ordering гарантирован только внутри партиции → максимум один consumer на партицию в consumer group. Для `transfer.events` (12 партиций) — максимум 12 параллельных consumer'ов. Если нужно больше throughput — увеличиваем партиции, но это необратимая операция в Kafka.
+
+---
+
+### Q22. «Расскажите про Redirect & Retry Topic»
+
+**Situation:** В Sprint 3 использовали Spring Kafka `@RetryableTopic` для Notification consumer. QA обнаружил: уведомления приходят в неправильном порядке. Клиент получал «Перевод завершён» перед «Оплата подтверждена».
+
+**Task:** Обеспечить ordering нотификаций при retry failures, чего `@RetryableTopic` не гарантирует.
+
+**Action:** Разработали паттерн Redirect & Retry с тремя компонентами:
+1. `NotificationDeliveryConsumer` — основной consumer для топика `notification.delivery`. При ошибке доставки: добавляет `transferId` в redirect set (`ConcurrentHashMap<String, Boolean>`), отправляет сообщение в `notification.delivery.retry`.
+2. Если приходит новое событие для того же `transferId` — проверяет redirect set → перенаправляет в retry-topic без попытки доставки. Так все события для одного перевода идут в retry-topic последовательно.
+3. `NotificationRetryConsumer` (топик `notification.delivery.retry`, `max.poll.records=1`) — обрабатывает по одному. Прогрессивный backoff: 30s → 2min → 10min → 30min → 1h. После 5 неудач → `notification.delivery.dlt`. При успехе — `mainConsumer.clearRedirect(transferId)`.
+
+**Result:** Нотификации всегда приходят в правильном порядке. Retry headers (`retry-count`, `original-timestamp`, `failure-reason`) позволяют мониторить retry-path в Grafana. Паттерн переиспользован для Payout consumer.
+
+---
+
+### Q23. «Что если consumer не может обработать сообщение?»
+
+Два разных подхода в зависимости от consumer'а:
+
+**@RetryableTopic (PaymentEventConsumer, PayoutEventConsumer):** 4 попытки с exponential backoff (base 30s, multiplier 10x, max 1 час). Spring Kafka автоматически создаёт retry-topics с суффиксами: `payments.payment.captured-0`, `-1`, `-2`, `-dlt`. Non-retriable исключения (`NonRetriableConsumerException`) обходят retry и идут сразу в DLT. `@DltHandler` логирует событие и инкрементирует счётчик `kafka.dlt.messages.total`.
+
+**Manual Redirect & Retry (NotificationDeliveryConsumer):** 5 retry с прогрессивным delay (30s → 2min → 10min → 30min → 1h). Header `retry-count` инкрементируется при каждой попытке. После исчерпания — `notification.delivery.dlt`. `NotificationDltConsumer` извлекает headers и логирует с полным контекстом.
+
+**Общий pipeline:** retry с backoff → после N попыток → DLT → Prometheus alert `DLTMessagesPresent` → PagerDuty → ручной разбор. DLT-сообщения не удаляются из Kafka (7 дней retention) — можно replay после исправления бага.
+
+Ключевой принцип: **idempotent consumers** (таблица `consumed_events`) гарантируют, что при retry мы не обработаем событие дважды.
+
+---
+
+### Q24. «Как обеспечиваете idempotent consumer?»
+
+Таблица `consumed_events` (Flyway V005): `event_id VARCHAR(128) PRIMARY KEY, consumer_group VARCHAR(128), topic VARCHAR(256), processed_at TIMESTAMPTZ`.
+
+Паттерн в каждом consumer'е (пример — `PaymentEventConsumer`):
+1. Парсим JSON, извлекаем `event_id`
+2. `consumedEventRepository.existsByEventId(event.eventId)` — O(1) lookup по PK
+3. Если `true` → `log.info("Duplicate event, skipping")` → return
+4. Если `false` → обрабатываем событие (UPDATE transfer status) + `consumedEventRepository.save(ConsumedEvent(eventId, "transfer-service", topic))` — **в одной `@Transactional`**
+
+Атомарность критична: INSERT в `consumed_events` + UPDATE `transfers.status` в одной PostgreSQL-транзакции. Если crash после UPDATE но до INSERT — транзакция откатится, при retry повторим обработку. Если crash после commit — event_id уже записан, retry будет пропущен.
+
+Зачем нужен idempotent consumer, если Kafka и так доставляет сообщения? Kafka гарантирует at-least-once при `acks=all` + `enable.idempotence=true` на producer, но consumer может получить дубль при: rebalance (consumer умер, другой подхватил с last committed offset), retry из DLT, manual replay. В финансовой системе двойная обработка = двойной платёж.
+
+---
+
+### Q25. «Какие гарантии доставки (acks) и почему?»
+
+**Producer (Outbox Service):** `acks=all` — сообщение считается отправленным только когда ВСЕ in-sync replicas (ISR) подтвердили запись. Это максимальная durability. `enable.idempotence=true` — защита от дубликатов при retry на стороне producer (Kafka producer ID + sequence number). `max.in.flight.requests.per.connection=5` — разрешает pipelining (5 batch'ей в полёте), но ordering сохраняется благодаря idempotence.
+
+**Trade-off:** `acks=all` добавляет ~5ms latency по сравнению с `acks=1` (только leader). Для финансовых топиков это приемлемо: потеря события `payment.requested` означает зависший перевод и потерянные деньги клиента. 5ms latency — ничто по сравнению с этим риском.
+
+**Batching:** `batch.size=16384` (16KB), `linger.ms=5` — Outbox Service агрегирует до 16KB или 5ms, затем отправляет batch. При low throughput — задержка 5ms. При high throughput — batch заполняется раньше.
+
+**Consumer:** `auto-offset-reset=earliest` — при первом подключении или потере offset читаем с начала (не теряем события). Manual offset commit после обработки batch'а — если consumer crash, перечитает необработанные.
+
+---
+
+### Q26. «Как мониторите Kafka?»
+
+Три уровня мониторинга:
+
+**1. Consumer Lag (ключевая метрика):** Разница между последним offset'ом в партиции и committed offset consumer'а. Если lag растёт — consumer не справляется с нагрузкой. Prometheus собирает через Spring Kafka Micrometer (`spring.kafka.listener.observation-enabled: true`). Alert `KafkaConsumerLagHigh` при lag > 10K на любой consumer group.
+
+**2. DLT Messages:** Счётчик `kafka.dlt.messages.total` (Counter) с tag `topic`. Любое сообщение в DLT — потенциальная потеря данных. Alert `DLTMessagesPresent` при count > 0 за 5 минут → P1 → PagerDuty.
+
+**3. Producer Metrics:** `kafka.producer.record.send.latency` (Histogram) — время отправки. Резкий рост → проблемы с Kafka cluster или network. `kafka.producer.record.error` — ошибки отправки.
+
+**Distributed Tracing:** `observation-enabled: true` на listener и template → Micrometer → OpenTelemetry → Tempo. W3C Trace Context пробрасывается через Kafka headers — можно увидеть полный trace от REST-запроса через Kafka consumers до PostgreSQL. В MDC добавляем `traceId` для корреляции логов в Loki.
+
+**Grafana Dashboards:** Kafka panel с consumer lag по группам, throughput (events/sec), DLT trend. При alert — drill-down: метрика → Tempo trace → Loki logs.
+
+---
+
+### Q27. «Что такое @RetryableTopic и когда его НЕ стоит использовать?»
+
+`@RetryableTopic` — Spring Kafka аннотация для автоматического retry через отдельные Kafka-топики. При ошибке обработки сообщение перемещается в retry-topic (`topic-0`, `topic-1`, ...), а затем в DLT (`topic-dlt`). Backoff настраивается: `attempts=4`, exponential с multiplier.
+
+**Наша конфигурация в `PaymentEventConsumer`:**
+```
+attempts = 4
+delay = 30000ms (30s)
+multiplier = 10.0
+maxDelay = 3600000ms (1 час)
+topicSuffixingStrategy = SUFFIX_WITH_INDEX_VALUE
+dltStrategy = FAIL_ON_ERROR
+exclude = [NonRetriableConsumerException]
+```
+
+**Когда НЕ стоит использовать:**
+1. **Когда важен ordering.** При retry Event A уходит в retry-topic, а Event B из основного топика обрабатывается сразу. Мы столкнулись с этим в Notification consumer — уведомления приходили в неправильном порядке. Заменили на ручной Redirect & Retry.
+2. **Когда ошибка гарантированно не пройдёт при повторе.** `NonRetriableConsumerException` (bad JSON, unknown event type) — бессмысленно ретраить. Поэтому мы добавили `exclude` для таких исключений — сразу в DLT.
+3. **Когда нужен fine-grained control over retry delay.** @RetryableTopic использует Kafka timestamps для delay — точность зависит от poll interval. Для notification retry нам нужна прогрессивная задержка (30s → 2min → 10min → 30min → 1h), что проще реализовать вручную.
+
+---
+
+### Q28. «Как работает CooperativeStickyAssignor?»
+
+По умолчанию Kafka использует `RangeAssignor` — при rebalance (добавление/удаление consumer'а) ВСЕ партиции отбираются у всех consumer'ов и перераспределяются заново. Это «stop-the-world»: на время rebalance ни один consumer не обрабатывает сообщения.
+
+`CooperativeStickyAssignor` (настроен в `application.yml` Transfer Service, Mock Payment, Mock Payout):
+1. **Cooperative:** rebalance происходит в два раунда. В первом — consumer'ы отдают только те партиции, которые нужно перераспределить. Остальные продолжают обрабатывать. Во втором — перераспределённые партиции назначаются новому consumer'у.
+2. **Sticky:** старается сохранить текущее назначение. Если consumer A обрабатывал партиции 0,1,2 и добавился consumer B — у A останутся 0,1, а B получит 2. Минимум миграций.
+
+**Почему это важно для TransferHub:** При autoscaling (HPA добавляет Pod) eager rebalance остановил бы обработку ВСЕХ переводов на 10-30 секунд. С cooperative — только 1-2 партиции мигрируют, остальные продолжают работать. Для финансовой системы 30 секунд простоя = сотни задержанных переводов.
+
+**Ограничение:** Go Notification Gateway (`segmentio/kafka-go`) не поддерживает CooperativeStickyAssignor — использует round-robin с stop-the-world rebalance. Это trade-off выбора Go-библиотеки.
+
+---
+
+### Q29. «Что будет, если Kafka полностью недоступна?»
+
+**Создание переводов:** Transfer Service продолжит записывать в PostgreSQL (transfer + outbox event в одной транзакции). Outbox Service не сможет опубликовать события — они копятся в таблице `outbox` со статусом PENDING. Перевод будет в статусе PAYMENT_PENDING, но Payment Service не получит команду. Клиент увидит «перевод в обработке».
+
+**Consumer'ы:** Все останавливаются — `PaymentEventConsumer`, `PayoutEventConsumer`, `NotificationDeliveryConsumer`, `AnalyticsEtlConsumer`. Текущие переводы зависают в промежуточных статусах. Но данные не теряются: Kafka хранит сообщения 7 дней (retention).
+
+**При восстановлении Kafka:**
+1. Outbox Service вычитает ВСЕ PENDING events и публикует batch'ами (batch-size 100, interval 500ms). Backlog может быть большим — зависит от времени простоя.
+2. Consumer'ы перечитывают с last committed offset. Consumer lag будет высоким — Prometheus alert `KafkaConsumerLagHigh` сработает.
+3. Idempotent consumers (`consumed_events` table) предотвращают двойную обработку при replay.
+
+**Мониторинг:** Kafka broker health через Prometheus, алерт при broker count < 3 → P1 → PagerDuty. Grafana dashboard показывает Kafka cluster status, ISR count, under-replicated partitions.
+
+**Mitigation:** Kafka cluster в production — 3 broker'а с replication factor 3. Потеря одного брокера — без impact. Потеря двух — degraded но работает. Полная недоступность — маловероятный сценарий, но система спроектирована для recovery.
+
+---
+
+### Q30. «Как данные попадают из Transfer Service в ClickHouse?»
+
+CQRS-light pipeline: PostgreSQL (OLTP writes) → Kafka → ETL consumer → ClickHouse (OLAP reads).
+
+1. При создании/обновлении перевода `TransferService` сохраняет OutboxEvent с `targetTopic = "transfer.events"`.
+2. Outbox Service публикует JSON-event в Kafka topic `transfer.events`.
+3. `AnalyticsEtlConsumer` (сервис `analytics-etl`, group `analytics-etl-group`) потребляет события и буферизирует в `CopyOnWriteArrayList<TransferAnalyticsRecord>`.
+4. Flush по двум триггерам: buffer.size >= `batchSize` (100) ИЛИ `@Scheduled` каждые 10 секунд.
+5. `ClickHouseClient.batchInsert()` — batch INSERT через JDBC (`com.clickhouse:clickhouse-jdbc:0.6.0`).
+6. Таблица `transfers_analytics` — `ReplacingMergeTree` ORDER BY `(transfer_id, updated_at)` — дедупликация при replay.
+
+**Почему не напрямую из PostgreSQL?** Decoupling: ClickHouse не зависит от PostgreSQL schema. Kafka как буфер: при недоступности ClickHouse события сохраняются в Kafka. Трансформация: ETL consumer преобразует JSON → structured record.
+
+**Метрики:** `etl.events.consumed`, `etl.flushes.success`, `etl.flushes.errors` — мониторинг pipeline health.
+
+---
+
+## Секция 4: Базы данных и производительность
+
+### Q31. «Расскажите про оптимизацию медленного SQL-запроса»
+
+**Situation:** GET `/api/v1/transfers?page=500&size=20` — время ответа 2.8 секунды. При глубоком пейджинге (page > 100) latency деградировала экспоненциально.
+
+**Task:** Обеспечить стабильное время ответа для списка переводов независимо от глубины пагинации.
+
+**Action:** Проблема в OFFSET/LIMIT: `SELECT * FROM transfers WHERE sender_id = ? ORDER BY created_at DESC OFFSET 10000 LIMIT 20` — PostgreSQL всё равно сканирует 10000 строк, чтобы их пропустить. EXPLAIN ANALYZE показал Seq Scan с cost пропорциональным offset.
+
+Заменили на cursor-based pagination:
+```sql
+SELECT * FROM transfers t
+WHERE t.sender_id = :senderId
+  AND (t.created_at, t.id) < (:cursorCreatedAt, CAST(:cursorId AS uuid))
+ORDER BY t.created_at DESC, t.id DESC
+LIMIT :limit
+```
+
+Row-value comparison `(created_at, id) < (cursor_created_at, cursor_id)` использует composite index `idx_transfers_sender_created (sender_id, created_at DESC)`. Cursor — Base64-encoded JSON `{c: "2026-01-15T...", i: "uuid"}`. Запрашиваем `size+1` записей — если вернулось больше, значит есть следующая страница.
+
+**Result:** Стабильное время ответа ~15ms независимо от глубины пагинации. Нет OFFSET → нет sequential scan. Trade-off: нельзя прыгать на произвольную страницу (только next/prev), но для UX бесконечного скролла это идеально.
+
+---
+
+### Q32. «Зачем SELECT FOR UPDATE SKIP LOCKED?»
+
+Используется в Outbox Service (`OutboxEventRepository`):
+```sql
+SELECT * FROM outbox
+WHERE status = 'PENDING'
+ORDER BY created_at ASC
+LIMIT :batchSize
+FOR UPDATE SKIP LOCKED
+```
+
+**FOR UPDATE** — блокирует выбранные строки до конца транзакции. Другие транзакции, пытающиеся SELECT FOR UPDATE тех же строк, будут ждать.
+
+**SKIP LOCKED** — вместо ожидания, пропускает уже заблокированные строки. Это ключевое отличие: позволяет нескольким инстансам Outbox Service работать параллельно без contention.
+
+Сценарий: 2 Pod'а Outbox Service поллят одновременно. Pod A берёт строки 1-100 (заблокированы). Pod B запрашивает — строки 1-100 заблокированы → SKIP LOCKED → берёт строки 101-200. Нет deadlock'ов, нет ожидания, максимальный throughput.
+
+Без SKIP LOCKED: Pod B ждёт release строк Pod A → sequential обработка → bottleneck. Или deadlock, если оба блокируют перекрывающиеся наборы строк в разном порядке.
+
+`ORDER BY created_at ASC` обеспечивает FIFO — старые события обрабатываются первыми. Partial index `idx_outbox_pending (created_at ASC WHERE status='PENDING')` ускоряет запрос.
+
+---
+
+### Q33. «Как делали миграцию MongoDB → PostgreSQL?»
+
+**Situation:** Pricing Service хранил corridor configs в MongoDB. При переходе на PostgreSQL для унификации хранилищ нужна была zero-downtime миграция.
+
+**Task:** Мигрировать данные из MongoDB в PostgreSQL надёжно, с возможностью retry и отката.
+
+**Action:** Отдельный сервис `mongodb-migration` (`MigrationRunner.kt`):
+
+1. **Distributed Lock:** `SELECT pg_try_advisory_lock(123456789)` — гарантирует, что только один инстанс выполняет миграцию. Если lock занят — graceful exit.
+2. **Resume from checkpoint:** Таблица `migration_progress` хранит `last_processed_id`. При restart — продолжаем с последнего обработанного документа, не с начала.
+3. **Batch processing:** Читаем из MongoDB по `batchSize` (500 по умолчанию). Для каждого batch — `INSERT INTO pricing_corridors ... ON CONFLICT DO UPDATE` (upsert). Сохраняем progress после каждого batch'а.
+4. **Dry-run mode:** Флаг `migration.dry-run=true` — проходит все шаги, логирует, но не пишет в PostgreSQL. Для validation перед реальной миграцией.
+5. **Type conversion:** MongoDB Decimal128 → Java BigDecimal (через explicit conversion, т.к. типы несовместимы напрямую).
+
+**Result:** Миграция 50K corridor configs за 45 секунд. Advisory lock предотвратил конкурентные запуски. Dry-run выявил 3 документа с некорректными данными до реальной миграции. Upsert (ON CONFLICT DO UPDATE) сделал миграцию идемпотентной — безопасный повторный запуск.
+
+---
+
+### Q34. «Как устроено кэширование? Как решали cache invalidation?»
+
+Три уровня кэширования:
+
+**1. Caffeine (L1, in-process):** `TransferStatusCache` — `maximumSize(10_000)`, `expireAfterWrite(5 min)`. W-TinyLFU eviction (admission filter + LFU). Hit ratio 82% в production. Мониторинг через `CaffeineCacheMetrics.monitor()` → Grafana. Заменил unbounded ConcurrentHashMap (memory leak fix).
+
+**2. Redis (L2, distributed):** `TransferCacheService` — key `transfer:status:{transferId}`, TTL 30 секунд. Cache-Aside pattern: GET → cache miss → DB query → cache put. Fail-open: при Redis failure — fallback на DB (returns null, не exception).
+
+**3. Redis в Pricing Service:** `QuoteCacheService` — key `quote:{quoteId}`, configurable TTL. Сериализация через Kotlinx.serialization (не Jackson, т.к. Ktor ecosystem).
+
+**Cache Invalidation стратегия:**
+- **TTL-based (passive):** Все кэши с ограниченным TTL. Worst case — stale data на время TTL (5 min для Caffeine, 30s для Redis).
+- **Event-driven (active):** При `transitionStatus()` — `transferStatusCache.put(saved.id, newStatus.value)` обновляет Caffeine. Redis evict при write.
+- **Cache stampede protection:** Caffeine `.build()` с single-flight (один запрос грузит, остальные ждут). Redis — TTL jitter не реализован (trade-off: сложность vs масштаб).
+
+Trade-off: допускаем stale reads (eventual consistency) в обмен на latency. Для GET transfer — допустимо: клиент увидит предыдущий статус, SSE push обновит через секунды.
+
+---
+
+### Q35. «Расскажите про утечку памяти»
+
+**Situation:** Transfer Service на staging: heap memory растёт монотонно — 70% через 12 часов, 85% через 24, OOM kill через 36 часов. Grafana alert `HighMemoryUsage` на threshold 80%.
+
+**Task:** Найти и устранить root cause без downtime.
+
+**Action:**
+1. `jcmd <pid> GC.heap_dump /tmp/heap.hprof` — снял heap dump на staging.
+2. Eclipse MAT (Memory Analyzer Tool) → Dominator Tree: `ConcurrentHashMap$Node` — 1.2 GB retained, 4.2M entries.
+3. Merge Shortest Paths to GC Root → `TransferStatusCache` — field типа `ConcurrentHashMap<UUID, String>`. Каждый вызов `transitionStatus()` добавлял entry, но удаления не было.
+4. Математика: ~100K transfers/day × ~350 bytes/entry (UUID 36 bytes + String ~50 bytes + Node overhead) = ~35 MB/day. За 6 недель = 1.47 GB.
+5. **Fix:** Заменил `ConcurrentHashMap` на Caffeine: `maximumSize(10_000)`, `expireAfterWrite(Duration.ofMinutes(5))`, `recordStats()`. Класс `TransferStatusCache.kt` — bounded cache с W-TinyLFU eviction и Micrometer metrics.
+
+**Result:** Heap стабилизирован на 450 MB (было 2.1 GB). GC pause p99: 520ms → 45ms. Cache hit ratio: 82%. Добавили soak-test (4 часа sustained load) в CI и правило в checklist: «Are all in-memory collections bounded?»
+
+---
+
+### Q36. «Что такое idempotency key и как реализовали?»
+
+Idempotency key — UUID, который клиент генерирует и передаёт в header `X-Idempotency-Key`. Гарантия: повторный запрос с тем же ключом вернёт тот же результат без side effects (не создаст дубль перевода).
+
+**Реализация — два уровня:**
+
+**1. В TransferService (domain level):** `transferRepository.findByIdempotencyKey(command.idempotencyKey)` — если найден → return existing transfer с `isNew=false`. Колонка `idempotency_key UUID UNIQUE` в таблице `transfers` (V001 migration).
+
+**2. Таблица `idempotency_keys` (API level, V004 migration):** Хранит `key UUID PK, transfer_id FK, response_status INT, response_body JSONB, expires_at TIMESTAMPTZ`. Кэширует полный HTTP-ответ — при повторном запросе возвращаем точно такой же JSON с тем же HTTP-статусом (201 при первом, 200 при повторном).
+
+**Атомарность:** Проверка и создание защищены Consul distributed lock (`locks/transfer/sender/{senderId}/create`). Lock по sender_id: два параллельных запроса от одного отправителя сериализуются. Запросы разных отправителей — параллельны.
+
+**TTL:** `expires_at` = 24 часа. Старые записи можно чистить scheduled job'ом. UNIQUE constraint на `idempotency_key` — последняя линия защиты (DB-level constraint violation если lock не сработал).
+
+---
+
+### Q37. «Какие уровни изоляции транзакций использовали?»
+
+PostgreSQL по умолчанию — **READ COMMITTED**, и мы его не меняли. Все `@Transactional` в TransferService используют default isolation level.
+
+**Почему READ COMMITTED достаточен:**
+- Каждая транзакция видит только committed данные (нет dirty reads)
+- Для Outbox Pattern: `FOR UPDATE SKIP LOCKED` обеспечивает сериализацию доступа к pending events — isolation level не играет роли, т.к. row-level lock
+- Для idempotency check: Consul distributed lock сериализует проверку ДО начала PostgreSQL-транзакции — race condition невозможен
+- Optimistic locking (`@Version`) ловит конкурентные обновления: если два consumer'а одновременно обновляют статус, один получит `StaleObjectStateException`
+
+**Почему НЕ SERIALIZABLE:**
+- SERIALIZABLE в PostgreSQL реализован через SSI (Serializable Snapshot Isolation) — добавляет overhead на каждую транзакцию
+- При конфликтах — serialization failure, нужен application-level retry
+- Для нашего случая избыточно: distributed lock + optimistic locking = достаточная защита
+
+**readOnly=true:** На `getTransfer()` и `listTransfers()` — подсказка Hibernate: не делать dirty checking, не flushing. PostgreSQL может использовать read-only replica (если настроена).
+
+---
+
+### Q38. «Как предотвращаете deadlock'и?»
+
+Три стратегии:
+
+**1. Consul Distributed Lock (application level):** Все операции, модифицирующие transfer, защищены lock'ом ДО начала PostgreSQL-транзакции. `executeWithLock("sender/{senderId}/create")` для создания, `executeWithLock("transfer/{transferId}/status")` для обновления. Один holder в один момент → нет конкурентных транзакций на одни данные → нет deadlock.
+
+**2. FOR UPDATE SKIP LOCKED (Outbox Service):** Вместо `FOR UPDATE` (который ждёт и может создать deadlock) — `SKIP LOCKED` пропускает заблокированные строки. Нет ожидания → нет circular wait → нет deadlock.
+
+**3. Optimistic Locking (safety net):** Колонка `version INT DEFAULT 0` в `transfers`. Hibernate: `UPDATE transfers SET status=?, version=version+1 WHERE id=? AND version=?`. Если version не совпал — `OptimisticLockException` → retry. Это last-line defense, если distributed lock не сработал (Consul down, race window).
+
+**Почему не SELECT FOR UPDATE для transfers:** При 6-8 Pod'ах Transfer Service, каждый с Kafka consumer'ами — множество concurrent transactions на одну таблицу. `SELECT FOR UPDATE` на разных строках может создать deadlock если consumer A блокирует transfer_1 и ждёт transfer_2, а consumer B блокирует transfer_2 и ждёт transfer_1. Consul lock на конкретный transferId исключает это.
+
+---
+
+## Секция 5: Конкурентность и защита от дублирования
+
+### Q39. «Как защищаетесь от дабл-клика?»
+
+Три уровня защиты от повторных запросов:
+
+**1. Frontend (X-Idempotency-Key):** Клиент генерирует UUID перед отправкой запроса. При повторном клике отправляется тот же UUID. API-контроллер извлекает header и передаёт в `CreateTransferCommand`.
+
+**2. Distributed Lock (Consul):** Lock по `sender/{senderId}/create` — второй запрос того же пользователя будет ждать завершения первого. Timeout 5 секунд с exponential backoff (50ms → 100ms → 200ms, max 500ms).
+
+**3. Idempotency Check (DB):** `transferRepository.findByIdempotencyKey()` — если перевод уже создан с этим ключом → return existing с HTTP 200 (не 201). UNIQUE constraint на колонке — final safety net на уровне БД.
+
+**Сценарий:** Два идентичных POST-запроса с одним `X-Idempotency-Key` приходят одновременно. Request A захватывает Consul lock, Request B ждёт. A создаёт перевод, отпускает lock. B захватывает lock, проверяет `findByIdempotencyKey()` → found → return existing transfer.
+
+Если Consul недоступен — `LockAcquisitionException` → 503 Service Unavailable. Лучше отказать, чем создать дубль перевода.
+
+---
+
+### Q40. «Optimistic vs Pessimistic locking — когда что?»
+
+**В TransferHub используем оба:**
+
+**Optimistic Locking (transfers table):** Колонка `version INT`, аннотация `@Version`. При UPDATE: `WHERE id=? AND version=?`. Если version не совпал — `StaleObjectStateException`. Используем для конкурентных обновлений статуса (два Kafka consumer'а одновременно).
+
+**Когда Optimistic лучше:** Конфликты редки (большинство переводов обновляются одним consumer'ом в один момент). Не держим DB lock — другие транзакции работают параллельно. Retry на application level при конфликте.
+
+**Pessimistic Locking (outbox table):** `SELECT FOR UPDATE SKIP LOCKED`. Используем для Outbox polling: множество consumer'ов конкурируют за одни и те же PENDING events. Конфликты частые → optimistic locking привёл бы к массовым retry.
+
+**Когда Pessimistic лучше:** Высокая конкуренция за одни ресурсы. `SKIP LOCKED` — особый случай: не ждём release, берём другие строки. Это гибрид: pessimistic по механике, но без blocking.
+
+**Consul Lock (distributed, application level):** Ни optimistic, ни pessimistic в классическом смысле. Distributed mutual exclusion через KV store. Используем когда нужно сериализовать операции ДО начала DB-транзакции (idempotency check + create transfer — должны быть атомарны).
+
+---
+
+### Q41. «Как обеспечивается атомарность проверки idempotency key?»
+
+Проблема: проверить `findByIdempotencyKey() == null` и создать перевод нужно атомарно. Если два Pod'а проверяют одновременно — оба получат null → оба создадут перевод.
+
+**Решение — три барьера:**
+
+**Barrier 1 — Consul Distributed Lock:** `executeWithLock("sender/{senderId}/create")` сериализует ВСЕ создания переводов одного отправителя. Второй запрос ждёт завершения первого. Lock granularity по sender_id: запросы разных отправителей параллельны.
+
+**Barrier 2 — DB Check:** Внутри lock: `transferRepository.findByIdempotencyKey()`. Если найден → return existing. Если нет → create. Проверка и создание в одной `@Transactional`.
+
+**Barrier 3 — UNIQUE Constraint:** `idempotency_key UUID UNIQUE` в таблице `transfers` (V001 migration). Если все предыдущие барьеры не сработали (Consul down, race condition) — INSERT нарушит UNIQUE → `DataIntegrityViolationException` → 409 Conflict. Это последняя линия обороны.
+
+Три барьера — defense in depth. В нормальном режиме работает Barrier 1 (Consul). Barrier 2 — для случая idempotency hit (возврат существующего перевода). Barrier 3 — катастрофический fallback.
+
+---
+
+### Q42. «Как несколько инстансов Outbox Service работают одновременно?»
+
+Outbox Service деплоится в 2-4 Pod'а для высокой доступности. Все Pod'ы поллят одну таблицу `outbox` одновременно.
+
+**Механизм — FOR UPDATE SKIP LOCKED:**
+1. Pod A: `SELECT FROM outbox WHERE status='PENDING' ORDER BY created_at ASC LIMIT 100 FOR UPDATE SKIP LOCKED` → получает строки 1-100, блокирует их.
+2. Pod B (параллельно): тот же запрос → строки 1-100 заблокированы → SKIP LOCKED → получает строки 101-200.
+3. Pod A публикует batch 1-100 в Kafka, обновляет status=SENT, commit → строки разблокированы.
+4. Pod B параллельно обрабатывает свой batch.
+
+**Гарантии:**
+- **No duplicates:** Каждая строка обрабатывается ровно одним Pod'ом (row-level lock).
+- **No deadlocks:** SKIP LOCKED — нет ожидания, нет circular wait.
+- **FIFO:** `ORDER BY created_at ASC` — старые события обрабатываются первыми.
+- **At-least-once:** Если Pod crash после SELECT но до UPDATE status=SENT — lock release по timeout (PostgreSQL statement_timeout), строки снова PENDING → другой Pod подхватит.
+
+**Polling interval:** 500ms (`outbox.polling.interval-ms`). Batch size: 100 (`outbox.polling.batch-size`). При 2 Pod'ах — throughput ~400 events/sec (200 per Pod per second). Масштабируется линейно с количеством Pod'ов.
+
+**Метрики:** Outbox Service публикует `kafkaTopic` и `kafkaOffset` при успешной отправке — можно верифицировать, что событие действительно в Kafka.

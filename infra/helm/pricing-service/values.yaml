@@ -1,0 +1,28 @@
+replicaCount: 2
+
+image:
+  repository: registry.gitlab.com/transferhub/pricing-service
+  tag: latest
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+grpc:
+  port: 9090
+
+http:
+  port: 8082
+
+redis:
+  host: "redis"
+  port: 6379
+
+hpa:
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilization: 60

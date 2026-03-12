@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
 
+    <conversionRule conversionWord="piiMask"
+                    converterClass="com.swiftpay.transfer.logging.PiiMaskingConverter"/>
+
     <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="transfer-service"/>
 
     <!-- Console appender for local development -->
     <springProfile name="!docker">
         <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
             <encoder>
-                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} [traceId=%X{traceId}] - %msg%n</pattern>
+                <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} [traceId=%X{traceId}] - %piiMask%n</pattern>
             </encoder>
         </appender>
 

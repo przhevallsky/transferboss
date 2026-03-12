@@ -1,0 +1,27 @@
+replicaCount: 2
+
+image:
+  repository: registry.gitlab.com/transferhub/notification-gateway
+  tag: latest
+
+resources:
+  requests:
+    memory: "64Mi"
+    cpu: "50m"
+  limits:
+    memory: "128Mi"
+    cpu: "250m"
+
+http:
+  port: 8085
+
+metrics:
+  port: 8086
+
+kafka:
+  bootstrapServers: "kafka:9092"
+
+hpa:
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilization: 60

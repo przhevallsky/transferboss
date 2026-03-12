@@ -1,0 +1,42 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alert-rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: "transfer-service"
+    metrics_path: /actuator/prometheus
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["transferhub-transfer:8080"]
+
+  - job_name: "outbox-service"
+    metrics_path: /actuator/prometheus
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["transferhub-outbox:8081"]
+
+  - job_name: "pricing-service"
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["transferhub-pricing:8082"]
+
+  - job_name: "notification-gateway"
+    metrics_path: /metrics
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["transferhub-notification:8086"]
+
+  - job_name: "kafka-exporter"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["kafka-exporter:9308"]

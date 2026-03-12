@@ -143,6 +143,31 @@ services:
       - transferhub-network
 
   # ──────────────────────────────────────────────
+  # Unleash — Feature Flag Platform
+  # ──────────────────────────────────────────────
+  unleash:
+    image: unleashorg/unleash-server:5
+    container_name: transferhub-unleash
+    ports:
+      - "4242:4242"
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@transferhub-postgres:5432/unleash"
+      DATABASE_SSL: "false"
+      INIT_ADMIN_API_TOKENS: "default:development.unleash-insecure-api-token"
+      INIT_CLIENT_API_TOKENS: "default:development.unleash-insecure-client-token"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4242/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - transferhub-network
+
+  # ──────────────────────────────────────────────
   # Application Services
   # ──────────────────────────────────────────────
 
@@ -173,6 +198,8 @@ services:
       SPRING_CLOUD_CONSUL_PORT: 8500
       PRICING_GRPC_HOST: transferhub-pricing
       PRICING_GRPC_PORT: 9090
+      UNLEASH_API_URL: http://transferhub-unleash:4242/api
+      UNLEASH_API_TOKEN: "default:development.unleash-insecure-client-token"
       SPRING_PROFILES_ACTIVE: docker
     networks:
       - transferhub-network

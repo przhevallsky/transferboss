@@ -1,24 +1,34 @@
 package com.swiftpay.transfer.client
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.swiftpay.transfer.exception.PricingUnavailableException
 import com.swiftpay.transfer.exception.QuoteExpiredException
 import com.transferhub.pricing.grpc.v1.PricingServiceGrpc
 import com.transferhub.pricing.grpc.v1.ValidateQuoteRequest
 import com.transferhub.pricing.grpc.v1.ValidateQuoteResponse
 import com.transferhub.pricing.grpc.v1.QuoteResponse
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.grpc.ManagedChannel
 import io.grpc.Server
 import io.grpc.Status
 import io.grpc.inprocess.InProcessChannelBuilder
 import io.grpc.inprocess.InProcessServerBuilder
 import io.grpc.stub.StreamObserver
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.springframework.data.redis.core.RedisTemplate
+import org.springframework.data.redis.core.ValueOperations
 import java.math.BigDecimal
+import java.time.Duration
 
 class PricingClientTest {
 
@@ -27,6 +37,23 @@ class PricingClientTest {
     private lateinit var channel: ManagedChannel
     private lateinit var pricingClient: PricingClient
     private lateinit var fakeService: FakePricingService
+    private val redisTemplate: RedisTemplate<String, String> = mockk(relaxed = true)
+    private val valueOps: ValueOperations<String, String> = mockk(relaxed = true)
+    private val objectMapper = ObjectMapper().registerKotlinModule()
+
+    private fun createRegistryWithConfig(
+        minCalls: Int = 5,
+        failureThreshold: Float = 50f,
+        waitDuration: Duration = Duration.ofSeconds(30)
+    ): CircuitBreakerRegistry {
+        val config = CircuitBreakerConfig.custom()
+            .slidingWindowSize(10)
+            .minimumNumberOfCalls(minCalls)
+            .failureRateThreshold(failureThreshold)
+            .waitDurationInOpenState(waitDuration)
+            .build()
+        return CircuitBreakerRegistry.of(config)
+    }
 
     @BeforeEach
     fun setup() {
@@ -43,7 +70,14 @@ class PricingClientTest {
             .directExecutor()
             .build()
 
-        pricingClient = PricingClient(channel)
+        every { redisTemplate.opsForValue() } returns valueOps
+
+        pricingClient = PricingClient(
+            channel,
+            createRegistryWithConfig(),
+            redisTemplate,
+            objectMapper
+        )
     }
 
     @AfterEach
@@ -52,26 +86,28 @@ class PricingClientTest {
         server.shutdownNow()
     }
 
+    private val validResponse = ValidateQuoteResponse.newBuilder()
+        .setIsValid(true)
+        .setQuote(
+            QuoteResponse.newBuilder()
+                .setQuoteId("q-123")
+                .setSendAmount("100.00")
+                .setReceiveAmount("5620.00")
+                .setExchangeRate("56.20")
+                .setFeeAmount("5.99")
+                .setFeeCurrency("USD")
+                .setSendCurrency("USD")
+                .setReceiveCurrency("PHP")
+                .build()
+        )
+        .build()
+
     @Nested
     inner class HappyPath {
 
         @Test
         fun `should return QuoteData when quote is valid`() {
-            fakeService.response = ValidateQuoteResponse.newBuilder()
-                .setIsValid(true)
-                .setQuote(
-                    QuoteResponse.newBuilder()
-                        .setQuoteId("q-123")
-                        .setSendAmount("100.00")
-                        .setReceiveAmount("5620.00")
-                        .setExchangeRate("56.20")
-                        .setFeeAmount("5.99")
-                        .setFeeCurrency("USD")
-                        .setSendCurrency("USD")
-                        .setReceiveCurrency("PHP")
-                        .build()
-                )
-                .build()
+            fakeService.response = validResponse
 
             val result = pricingClient.validateQuote("q-123")
 
@@ -83,6 +119,15 @@ class PricingClientTest {
             assertEquals("USD", result.feeCurrency)
             assertEquals("USD", result.sendCurrency)
             assertEquals("PHP", result.receiveCurrency)
+        }
+
+        @Test
+        fun `should cache quote on successful validation`() {
+            fakeService.response = validResponse
+
+            pricingClient.validateQuote("q-123")
+
+            verify { valueOps.set(eq("quote:validated:q-123"), any(), any<Duration>()) }
         }
     }
 
@@ -154,6 +199,92 @@ class PricingClientTest {
             assertThrows<PricingUnavailableException> {
                 pricingClient.validateQuote("q-123")
             }
+        }
+    }
+
+    @Nested
+    inner class CircuitBreakerBehavior {
+
+        @Test
+        fun `should open circuit after consecutive failures and use cache fallback`() {
+            // Use a registry with minCalls=3 for faster testing
+            pricingClient = PricingClient(
+                channel,
+                createRegistryWithConfig(minCalls = 3),
+                redisTemplate,
+                objectMapper
+            )
+            fakeService.statusError = Status.UNAVAILABLE.withDescription("down")
+
+            // Trigger 3 failures to open the circuit
+            repeat(3) {
+                assertThrows<PricingUnavailableException> {
+                    pricingClient.validateQuote("q-123")
+                }
+            }
+
+            // Cache has a valid quote → fallback should return it
+            val cachedJson = objectMapper.writeValueAsString(
+                QuoteData("q-123", BigDecimal("100"), BigDecimal("5620"), BigDecimal("56.20"),
+                    BigDecimal("5.99"), "USD", "USD", "PHP")
+            )
+            every { valueOps.get("quote:validated:q-123") } returns cachedJson
+
+            // 4th call — circuit is open, should use cache fallback
+            val result = pricingClient.validateQuote("q-123")
+            assertEquals("q-123", result.quoteId)
+        }
+
+        @Test
+        fun `should throw PricingUnavailableException when circuit open and no cache`() {
+            pricingClient = PricingClient(
+                channel,
+                createRegistryWithConfig(minCalls = 3),
+                redisTemplate,
+                objectMapper
+            )
+            fakeService.statusError = Status.UNAVAILABLE.withDescription("down")
+
+            repeat(3) {
+                assertThrows<PricingUnavailableException> {
+                    pricingClient.validateQuote("q-nocache")
+                }
+            }
+
+            // No cache entry
+            every { valueOps.get("quote:validated:q-nocache") } returns null
+
+            val ex = assertThrows<PricingUnavailableException> {
+                pricingClient.validateQuote("q-nocache")
+            }
+            assert(ex.message!!.contains("no cached quote"))
+        }
+
+        @Test
+        fun `should transition back to closed after successful calls in half-open`() {
+            val registry = createRegistryWithConfig(minCalls = 3, waitDuration = Duration.ofMillis(100))
+            pricingClient = PricingClient(channel, registry, redisTemplate, objectMapper)
+            fakeService.statusError = Status.UNAVAILABLE.withDescription("down")
+
+            // Open the circuit
+            repeat(3) {
+                assertThrows<PricingUnavailableException> { pricingClient.validateQuote("q-123") }
+            }
+
+            // Wait for half-open
+            Thread.sleep(200)
+
+            // Now service is back
+            fakeService.statusError = null
+            fakeService.response = validResponse
+
+            // Half-open → success → closed
+            val result = pricingClient.validateQuote("q-123")
+            assertEquals("q-123", result.quoteId)
+
+            // Verify circuit is closed — subsequent calls go through
+            val result2 = pricingClient.validateQuote("q-123")
+            assertEquals("q-123", result2.quoteId)
         }
     }
 

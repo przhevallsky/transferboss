@@ -25,6 +25,8 @@ mongodb-driver      = "5.2.1"
 resilience4j        = "2.2.0"
 # Redis
 lettuce             = "6.4.0.RELEASE"
+# Unleash
+unleash             = "9.2.4"
 # Micrometer (version managed by Spring BOM for Spring services)
 micrometer          = "1.13.4"
 
@@ -33,6 +35,8 @@ micrometer          = "1.13.4"
 spring-boot-starter-web         = { module = "org.springframework.boot:spring-boot-starter-web" }
 spring-boot-starter-data-jpa    = { module = "org.springframework.boot:spring-boot-starter-data-jpa" }
 spring-boot-starter-data-redis  = { module = "org.springframework.boot:spring-boot-starter-data-redis" }
+spring-boot-starter-data-redis-reactive = { module = "org.springframework.boot:spring-boot-starter-data-redis-reactive" }
+spring-boot-starter-webflux     = { module = "org.springframework.boot:spring-boot-starter-webflux" }
 spring-boot-starter-actuator    = { module = "org.springframework.boot:spring-boot-starter-actuator" }
 spring-boot-starter-validation  = { module = "org.springframework.boot:spring-boot-starter-validation" }
 spring-cloud-starter-consul     = { module = "org.springframework.cloud:spring-cloud-starter-consul-discovery" }
@@ -84,9 +88,14 @@ mongodb-driver-kotlin-coroutine = { module = "org.mongodb:mongodb-driver-kotlin-
 
 # ── Resilience4j ────────────────────────────────────────────
 resilience4j-circuitbreaker     = { module = "io.github.resilience4j:resilience4j-circuitbreaker", version.ref = "resilience4j" }
+resilience4j-spring-boot3       = { module = "io.github.resilience4j:resilience4j-spring-boot3",  version.ref = "resilience4j" }
+resilience4j-micrometer         = { module = "io.github.resilience4j:resilience4j-micrometer",     version.ref = "resilience4j" }
 
 # ── Redis ────────────────────────────────────────────────
 lettuce-core                    = { module = "io.lettuce:lettuce-core",                  version.ref = "lettuce" }
+
+# ── Unleash ────────────────────────────────────────────
+unleash-client                  = { module = "io.getunleash:unleash-client-java",       version.ref = "unleash" }
 
 # ── Test ─────────────────────────────────────────────────
 spring-boot-starter-test        = { module = "org.springframework.boot:spring-boot-starter-test" }

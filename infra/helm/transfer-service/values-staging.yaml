@@ -1,0 +1,33 @@
+replicaCount: 3
+
+image:
+  tag: staging
+
+resources:
+  requests:
+    memory: "768Mi"
+    cpu: "500m"
+  limits:
+    memory: "1536Mi"
+    cpu: "1500m"
+
+spring:
+  profile: staging
+
+database:
+  url: "jdbc:postgresql://postgres-staging:5432/transferhub"
+
+kafka:
+  bootstrapServers: "kafka-staging:9092"
+
+redis:
+  host: "redis-staging"
+  port: 6379
+
+unleash:
+  apiUrl: "http://unleash-staging:4242/api"
+
+hpa:
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilization: 55

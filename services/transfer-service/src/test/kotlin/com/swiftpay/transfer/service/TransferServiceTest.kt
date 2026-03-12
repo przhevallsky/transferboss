@@ -3,6 +3,8 @@ package com.swiftpay.transfer.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.swiftpay.transfer.client.IdentityClient
+import com.swiftpay.transfer.client.KycStatus
 import com.swiftpay.transfer.client.PricingClient
 import com.swiftpay.transfer.client.QuoteData
 import com.swiftpay.transfer.domain.model.*
@@ -10,6 +12,7 @@ import com.swiftpay.transfer.domain.vo.DeliveryMethod
 import com.swiftpay.transfer.domain.vo.OutboxEventStatus
 import com.swiftpay.transfer.exception.*
 import com.swiftpay.transfer.lock.DistributedLockService
+import com.swiftpay.transfer.sse.TransferStatusPublisher
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.RecipientRepository
 import com.swiftpay.transfer.repository.TransferRepository
@@ -38,6 +41,9 @@ class TransferServiceTest {
     private val recipientRepository: RecipientRepository = mockk()
     private val distributedLockService: DistributedLockService = mockk()
     private val pricingClient: PricingClient = mockk()
+    private val identityClient: IdentityClient = mockk()
+    private val transferStatusPublisher: TransferStatusPublisher = mockk(relaxed = true)
+    private val feeService: FeeService = mockk()
 
     private val objectMapper = ObjectMapper().apply {
         registerKotlinModule()
@@ -97,6 +103,12 @@ class TransferServiceTest {
         }
 
         every { pricingClient.validateQuote(any()) } returns defaultQuoteData
+        every { feeService.applyFeeStrategy(any(), any()) } answers { secondArg() }
+        every { identityClient.checkKyc(any()) } returns KycStatus(
+            userId = senderId.toString(),
+            status = "APPROVED",
+            kycLevel = "FULL"
+        )
 
         transferService = TransferService(
             transferRepository = transferRepository,
@@ -104,7 +116,10 @@ class TransferServiceTest {
             recipientRepository = recipientRepository,
             objectMapper = objectMapper,
             distributedLockService = distributedLockService,
-            pricingClient = pricingClient
+            pricingClient = pricingClient,
+            identityClient = identityClient,
+            transferStatusPublisher = transferStatusPublisher,
+            feeService = feeService
         )
     }
 

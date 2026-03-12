@@ -13,6 +13,7 @@ import com.swiftpay.transfer.repository.ConsumedEventRepository
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.TransferRepository
 import com.swiftpay.transfer.service.TransferCacheService
+import com.swiftpay.transfer.sse.TransferStatusPublisher
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import io.mockk.*
 import io.mockk.junit5.MockKExtension
@@ -37,6 +38,7 @@ class PayoutEventConsumerTest {
     private val consumedEventRepository: ConsumedEventRepository = mockk()
     private val outboxEventRepository: OutboxEventRepository = mockk()
     private val transactionTemplate: TransactionTemplate = mockk()
+    private val transferStatusPublisher: TransferStatusPublisher = mockk(relaxed = true)
 
     private val objectMapper = ObjectMapper().apply {
         registerKotlinModule()
@@ -58,6 +60,7 @@ class PayoutEventConsumerTest {
             outboxEventRepository = outboxEventRepository,
             transactionTemplate = transactionTemplate,
             objectMapper = objectMapper,
+            transferStatusPublisher = transferStatusPublisher,
             meterRegistry = SimpleMeterRegistry()
         )
 

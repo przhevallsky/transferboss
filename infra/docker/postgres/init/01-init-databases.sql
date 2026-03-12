@@ -4,3 +4,6 @@
 
 -- Grant full privileges on the default database
 GRANT ALL PRIVILEGES ON DATABASE transferhub TO transferhub;
+
+-- Unleash feature flag server needs its own database
+CREATE DATABASE unleash;

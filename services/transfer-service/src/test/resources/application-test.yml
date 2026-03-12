@@ -1,8 +1,23 @@
+identity:
+  base-url: http://localhost:8080
+
+unleash:
+  api-url: http://localhost:4242/api
+  api-token: test-token
+  app-name: transfer-service
+  environment: test
+  fetch-toggles-interval: 1
+
 consul:
   lock:
     enabled: false
 
 spring:
+  main:
+    allow-bean-definition-overriding: true
+  autoconfigure:
+    exclude:
+      - io.github.resilience4j.springboot3.micrometer.autoconfigure.TimerAutoConfiguration
   flyway:
     clean-disabled: false
     enabled: true

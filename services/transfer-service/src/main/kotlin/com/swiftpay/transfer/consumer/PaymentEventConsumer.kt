@@ -12,6 +12,7 @@ import com.swiftpay.transfer.repository.ConsumedEventRepository
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.TransferRepository
 import com.swiftpay.transfer.service.TransferCacheService
+import com.swiftpay.transfer.sse.TransferStatusPublisher
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
@@ -36,6 +37,7 @@ class PaymentEventConsumer(
     private val outboxEventRepository: OutboxEventRepository,
     private val transactionTemplate: TransactionTemplate,
     private val objectMapper: ObjectMapper,
+    private val transferStatusPublisher: TransferStatusPublisher,
     meterRegistry: MeterRegistry
 ) {
 
@@ -79,6 +81,9 @@ class PaymentEventConsumer(
                 throw NonRetriableConsumerException("Invalid transferId format: ${event.transferId}", e)
             }
 
+            var previousStatus: String? = null
+            var secondaryTransition = false
+
             val updated = transactionTemplate.execute {
                 if (consumedEventRepository.existsByEventId(event.eventId)) {
                     log.info("Duplicate event {}, skipping", event.eventId)
@@ -88,6 +93,7 @@ class PaymentEventConsumer(
                 val transfer = transferRepository.findTransferById(transferId)
                     ?: throw TransientConsumerException("Transfer not found: $transferId")
 
+                previousStatus = transfer.status.value
                 transfer.transitionTo(newStatus, event.reason)
                 if (event.paymentId != null) {
                     transfer.paymentId = try {
@@ -121,6 +127,7 @@ class PaymentEventConsumer(
                     transfer.transitionTo(TransferStatus.PayoutPending)
                     transferRepository.save(transfer)
                     log.info("Transfer {} transitioned to PAYOUT_PENDING, outbox event saved", transferId)
+                    secondaryTransition = true
                 }
 
                 consumedEventRepository.save(
@@ -135,6 +142,10 @@ class PaymentEventConsumer(
 
             if (updated) {
                 transferCacheService.evict(transferId)
+                transferStatusPublisher.publishStatusChange(transferId, newStatus.value, previousStatus!!)
+                if (secondaryTransition) {
+                    transferStatusPublisher.publishStatusChange(transferId, TransferStatus.PayoutPending.value, newStatus.value)
+                }
             }
         } finally {
             MDC.clear()

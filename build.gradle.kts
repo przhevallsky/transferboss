@@ -14,3 +14,22 @@ allprojects {
         mavenCentral()
     }
 }
+
+subprojects {
+    afterEvaluate {
+        if (plugins.hasPlugin("org.jetbrains.kotlin.jvm")) {
+            apply(plugin = "jacoco")
+
+            tasks.withType<JacocoReport> {
+                reports {
+                    xml.required.set(true)
+                    html.required.set(true)
+                }
+            }
+
+            tasks.withType<Test> {
+                finalizedBy(tasks.withType<JacocoReport>())
+            }
+        }
+    }
+}

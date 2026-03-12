@@ -44,3 +44,11 @@ logs/
 # === Test ===
 *.exec
 test-results/
+
+# === Heap Dumps ===
+*.hprof
+
+# === Secrets ===
+credentials.json
+*.pem
+!**/src/main/resources/keys/*.pem

@@ -1,7 +1,7 @@
 # TransferHub — Cross-Border Remittance Platform
 
 > Event-driven microservices platform for international money transfers.
-> Built with Kotlin, Spring Boot, Ktor, gRPC, Kafka, PostgreSQL, and Redis.
+> Kotlin · Spring Boot · Ktor · Go · Kafka · PostgreSQL · MongoDB · Redis · ClickHouse · Kubernetes
 
 [![CI Pipeline](https://github.com/przhevallsky/transferboss/actions/workflows/ci.yml/badge.svg)](https://github.com/przhevallsky/transferboss/actions/workflows/ci.yml)
 
@@ -70,19 +70,23 @@ graph TB
 | Service | Tech Stack | Port | Protocol | Database | Purpose |
 |---------|-----------|------|----------|----------|---------|
 | **Transfer Service** | Kotlin · Spring Boot 3 | 8080 | REST | PostgreSQL, Redis | Core business logic — transfer lifecycle, state machine, saga orchestration, idempotency |
-| **Pricing Service** | Kotlin · Ktor | 8082 (HTTP) · 50051 (gRPC) | gRPC + REST | MongoDB, Redis | Quote calculation — fees, exchange rates, rate locks. Latency-critical: p99 < 150ms |
+| **Pricing Service** | Kotlin · Ktor | 8082 (HTTP) · 9090 (gRPC) | gRPC + REST | MongoDB, Redis | Quote calculation — fees, exchange rates, rate locks. Latency-critical: p99 < 150ms |
 | **Outbox Service** | Kotlin · Spring Boot 3 | 8081 | Kafka Producer | PostgreSQL (reads outbox table) | Transactional Outbox — polls outbox table, publishes events to Kafka with ordering guarantees |
-| Notification Gateway | Go *(Sprint 3)* | 8090 | REST | — | Multi-channel delivery: push, SMS, email. High throughput, minimal resource footprint |
+| **Notification Gateway** | Go 1.23 | 8085 (HTTP) · 8086 (metrics) | Kafka Consumer | — | Multi-channel delivery: push, SMS, email. High throughput, ~15MB Docker image |
+| **LLM Service** | Kotlin · Spring Boot 3 | 8087 | REST + SSE | PostgreSQL (pgvector) | RAG-based AI assistant — document chunking, vector search, OpenAI integration |
+| **Analytics ETL** | Kotlin · Spring Boot 3 | 8088 | Kafka Consumer | ClickHouse | Kafka → ClickHouse batch ETL pipeline for OLAP analytics |
+| **Mock Payment** | Kotlin · Spring Boot 3 | 8083 | Kafka | — | Simulates payment provider (captures, failures, refunds) |
+| **Mock Payout** | Kotlin · Spring Boot 3 | 8084 | Kafka | — | Simulates payout provider (completions, failures) |
 
 ## Tech Stack
 
 | Category | Technology | Why |
 |----------|-----------|-----|
-| **Languages** | Kotlin 2.0, Java 21, Go *(Sprint 3)* | Kotlin — primary (idiomatic, coroutines, null safety). Go — for high-throughput infra services |
+| **Languages** | Kotlin 1.9.25, Java 21, Go 1.23 | Kotlin — primary (idiomatic, coroutines, null safety). Go — for high-throughput infra services |
 | **Frameworks** | Spring Boot 3.3, Ktor 2.3 | Spring Boot — rich ecosystem for CRUD/transactional services. Ktor — lightweight, coroutines-native for latency-critical services |
 | **Messaging** | Apache Kafka 3.7 (KRaft) | Event backbone. Ordering per transfer (key=transfer_id), replay, multi-consumer. KRaft mode — no ZooKeeper dependency |
-| **Databases** | PostgreSQL 16, MongoDB 7 | PostgreSQL — ACID for financial transactions. MongoDB — flexible nested configs (corridor → delivery methods → fee tiers) |
-| **Caching** | Redis 7 | Sub-ms latency for hot path: exchange rate cache (TTL 30s), rate locks, idempotency keys |
+| **Databases** | PostgreSQL 16 + pgvector, MongoDB 7, ClickHouse 24.1 | PostgreSQL — ACID for financial transactions + vector search. MongoDB — flexible configs. ClickHouse — columnar OLAP for analytics |
+| **Caching** | Redis 7, Caffeine | Redis — distributed cache, rate limiting, Pub/Sub. Caffeine — in-process L1 cache (W-TinyLFU) |
 | **Inter-service** | gRPC + Protobuf, REST | gRPC — Transfer↔Pricing (200 RPS, 5ms vs 15ms REST). REST — external API |
 | **Coordination** | Consul 1.18 | Distributed locking for concurrent transfer mutations (CP system, Raft consensus) |
 | **Build** | Gradle 8.10 (Kotlin DSL), Go Modules | Gradle — incremental builds, version catalog, multi-module. Go Modules — standard for Go |
@@ -102,8 +106,13 @@ graph TB
 - **Event-Driven Architecture** — services communicate via Kafka events. Loose coupling, independent deployment, event replay for recovery.
 - **Database-per-Service** — each service owns its data store. No shared databases between services.
 - **Redirect & Retry Topic** — preserves event ordering during failures. Failed events redirect subsequent events for same transfer_id to retry topic.
-- **Circuit Breaker** *(Sprint 4)* — Resilience4j for external API calls (exchange rate provider, payment gateway).
-- **CQRS-lite** *(Sprint 4)* — write path (PostgreSQL) separated from read path (Redis cache for status queries, ClickHouse for analytics).
+- **Circuit Breaker** — Resilience4j for external API calls (Pricing, Identity, OpenAI). Fallback strategies per service.
+- **CQRS-lite** — write path (PostgreSQL) separated from read path (Redis cache for status queries, ClickHouse for analytics).
+- **Feature Flags** — Unleash for safe rollout (trunk-based development + gradual rollout).
+- **RAG Pipeline** — pgvector similarity search + OpenAI for AI-powered support assistant.
+- **JWT + RBAC** — RS256 authentication with role-based access (SENDER/OPERATOR/ADMIN).
+- **Rate Limiting** — Redis sliding window (100 req/min per user) with Lua script for atomicity.
+- **PII Masking** — automatic masking of email, phone, SSN, card numbers in logs.
 
 ## Quick Start
 
@@ -119,9 +128,12 @@ graph TB
 git clone https://github.com/przhevallsky/transferboss.git
 cd transferhub
 
-# Start all infrastructure (PostgreSQL, MongoDB, Redis, Kafka, Consul)
+# Start all infrastructure (PostgreSQL, MongoDB, Redis, Kafka, Consul, ClickHouse, Unleash)
 cd infra/docker
 docker compose up -d
+
+# Start with monitoring stack (Prometheus, Grafana, Loki, Tempo, Alertmanager)
+docker compose --profile monitoring up -d
 
 # Verify everything is healthy
 docker compose ps
@@ -131,12 +143,13 @@ Expected output — all services `healthy`:
 
 ```
 NAME                    STATUS
-transferhub-postgres    Up (healthy)
-transferhub-mongo       Up (healthy)
-transferhub-redis       Up (healthy)
-transferhub-kafka       Up (healthy)
-transferhub-consul      Up (healthy)
-transferhub-kafka-init  Exited (0)      ← one-shot container, created topics and stopped
+transferhub-postgres    Up (healthy)     ← PostgreSQL 16 + pgvector
+transferhub-mongo       Up (healthy)     ← MongoDB 7
+transferhub-redis       Up (healthy)     ← Redis 7
+transferhub-kafka       Up (healthy)     ← Kafka 7.6 (KRaft)
+transferhub-consul      Up (healthy)     ← Consul 1.18
+transferhub-clickhouse  Up (healthy)     ← ClickHouse 24.1
+transferhub-unleash     Up (healthy)     ← Unleash 5 (feature flags)
 ```
 
 ### 2. Build & test all services
@@ -184,6 +197,15 @@ open http://localhost:8500
 
 # Swagger UI (Transfer Service)
 open http://localhost:8080/swagger-ui
+
+# Grafana (with monitoring profile)
+open http://localhost:3000    # admin/admin
+
+# Unleash (feature flags)
+open http://localhost:4242    # admin/unleash4all
+
+# ClickHouse HTTP interface
+open http://localhost:8123
 ```
 
 ## Project Structure
@@ -206,15 +228,22 @@ transferhub/
 │   │   ├── src/main/proto/         #   Protobuf contract definitions (.proto files)
 │   │   ├── build.gradle.kts        #   Includes protobuf-gradle-plugin for code generation
 │   │   └── Dockerfile
-│   └── notification-gateway/       # Go (Sprint 3) — multi-channel delivery
+│   ├── notification-gateway/       # Go — multi-channel delivery (Kafka → SMS/Push)
+│   ├── llm-service/               # Kotlin / Spring Boot — RAG AI assistant (pgvector)
+│   ├── analytics-etl/             # Kotlin / Spring Boot — Kafka → ClickHouse ETL
+│   ├── mock-payment-service/      # Kotlin / Spring Boot — payment simulation
+│   ├── mock-payout-service/       # Kotlin / Spring Boot — payout simulation
+│   └── mongodb-migration/         # Kotlin / Spring Boot — MongoDB → PostgreSQL migration tool
 ├── infra/
 │   ├── docker/
-│   │   ├── docker-compose.yml      # Local dev: PostgreSQL, MongoDB, Redis, Kafka, Consul
+│   │   ├── docker-compose.yml      # Local dev: PostgreSQL, MongoDB, Redis, Kafka, Consul, ClickHouse, Unleash
+│   │   ├── clickhouse/init/        # ClickHouse schema (ReplacingMergeTree, materialized views)
 │   │   ├── postgres/init/          # Auto-creates databases on first start
 │   │   ├── mongo/init/             # Auto-creates collections + seed data
 │   │   └── kafka/init/             # Auto-creates all Kafka topics
-│   ├── helm/                       # Kubernetes Helm charts (Sprint 5)
-│   └── terraform/                  # AWS infrastructure as code (Sprint 5)
+│   ├── helm/                       # Kubernetes Helm charts (transfer, outbox, pricing, notification-gateway)
+│   ├── terraform/                  # AWS infrastructure as code (VPC, EKS, RDS, S3)
+│   └── monitoring/                 # Prometheus, Grafana, Loki, Tempo, Alertmanager configs
 ├── docs/
 │   ├── adr/                        # Architecture Decision Records
 │   ├── diagrams/                   # Architecture diagrams (Levels 1-4)
@@ -310,12 +339,22 @@ Key decisions are documented as ADRs in [`docs/adr/`](docs/adr/):
 | ADR-010 | Terraform for IaC | Accepted |
 | ADR-011 | Prometheus + Grafana + Loki + Tempo for observability | Accepted |
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Interview Q&A](docs/interview-qa.md) | 86+ questions with detailed answers covering all aspects of the project |
+| [Architecture Diagrams](docs/diagrams/) | Level 2-4 diagrams: internal structure, flow diagrams, infrastructure, before/after |
+| [ADRs](docs/adr/) | Architecture Decision Records for key technical choices |
+| [Sprint Summaries](docs/) | Detailed sprint summaries with code review findings and theoretical foundations |
+
 ## Roadmap
 
 - [x] **Sprint 0** — Project setup, service skeletons, CI/CD
-- [ ] **Sprint 1** — Transfer lifecycle (create, state machine, validation)
-- [ ] **Sprint 2** — Outbox polling, Kafka integration, event publishing
-- [ ] **Sprint 3** — Notification Gateway (Go), inter-service events
-- [ ] **Sprint 4** — Resilience (Circuit Breaker, retry topics, DLQ), Feature Flags
-- [ ] **Sprint 5** — Observability (Prometheus, Grafana, Loki, Tempo), Kubernetes, Terraform
-- [ ] **Sprint 6** — LLM integration (RAG for support), load testing, security hardening
+- [x] **Sprint 1** — Transfer lifecycle (create, state machine, validation, cursor pagination)
+- [x] **Sprint 2** — Outbox polling, Kafka integration, Saga choreography
+- [x] **Sprint 3** — Notification Gateway (Go), Redirect & Retry, inter-service events
+- [x] **Sprint 4** — Resilience (Circuit Breaker, DLT), Feature Flags (Unleash)
+- [x] **Sprint 5** — Security (JWT, RBAC, rate limiting), Observability, Helm, Terraform
+- [x] **Sprint 6** — LLM/RAG (pgvector), ClickHouse analytics, memory leak investigation
+- [x] **Sprint 7** — Interview prep, architecture diagrams, documentation polish

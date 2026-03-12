@@ -42,3 +42,17 @@ datasources:
         spanEndTimeShift: "1h"
       serviceMap:
         datasourceUid: prometheus
+
+  - name: ClickHouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    url: http://clickhouse:8123
+    uid: clickhouse
+    jsonData:
+      defaultDatabase: default
+      port: 9000
+      server: clickhouse
+      username: default
+      tlsSkipVerify: true
+    secureJsonData:
+      password: ""

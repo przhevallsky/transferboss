@@ -1,6 +1,7 @@
 package com.swiftpay.transfer.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.swiftpay.transfer.cache.TransferStatusCache
 import com.swiftpay.transfer.client.IdentityClient
 import com.swiftpay.transfer.client.PricingClient
 import com.swiftpay.transfer.domain.model.*
@@ -35,7 +36,8 @@ class TransferService(
     private val identityClient: IdentityClient,
     private val transferStatusPublisher: TransferStatusPublisher,
     private val feeService: FeeService,
-    private val transferMetrics: TransferMetrics
+    private val transferMetrics: TransferMetrics,
+    private val transferStatusCache: TransferStatusCache
 ) {
     private val log = LoggerFactory.getLogger(TransferService::class.java)
 
@@ -195,6 +197,9 @@ class TransferService(
 
             transfer.transitionTo(newStatus, reason)
             val saved = transferRepository.save(transfer)
+
+            // Cache the latest status for fast lookups
+            transferStatusCache.put(saved.id, newStatus.value)
 
             val recipient = recipientRepository.findRecipientById(saved.recipientId)
             TransferWithRecipient(saved, recipient)

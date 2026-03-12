@@ -1,0 +1,31 @@
+server:
+  port: 8088
+
+spring:
+  application:
+    name: analytics-etl
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: analytics-etl-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+clickhouse:
+  url: jdbc:ch://localhost:8123/default
+  username: default
+  password: ""
+
+etl:
+  batch-size: 100
+  flush-interval-seconds: 10
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    tags:
+      application: analytics-etl

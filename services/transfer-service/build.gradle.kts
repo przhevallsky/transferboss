@@ -80,6 +80,9 @@ dependencies {
     implementation(libs.grpc.kotlin.stub)
     implementation(libs.protobuf.kotlin)
 
+    // Cache
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
+
     // Resilience4j
     implementation(libs.resilience4j.spring.boot3)
     implementation(libs.resilience4j.micrometer)

@@ -1,0 +1,30 @@
+server:
+  port: 8089
+
+spring:
+  application:
+    name: mongodb-migration
+  datasource:
+    url: jdbc:postgresql://localhost:5432/transferhub
+    username: transferhub
+    password: transferhub
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: false
+
+mongodb:
+  uri: mongodb://admin:admin@localhost:27017
+  database: pricing_db
+
+migration:
+  batch-size: 500
+  dry-run: false
+  collection: corridors
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus

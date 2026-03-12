@@ -1161,3 +1161,346 @@ management.tracing:
 **Runbooks:** Для каждого alert — runbook: что проверить, как mitigation, escalation path. Пример: `HighMemoryUsage` → check heap dump → identify leak → restart Pod (short-term) → fix code (long-term).
 
 **Post-mortem:** После каждого P1 — blameless post-mortem: timeline, root cause, action items. Документ в shared drive. Action items добавляются в tech debt backlog.
+
+---
+
+## Секция 10: LLM-инженерия
+
+### Q67. «Расскажите про RAG pipeline»
+
+RAG (Retrieval-Augmented Generation) — паттерн, при котором LLM отвечает не из «головы», а на основе релевантных документов из базы знаний. Это решает проблему галлюцинаций: модель генерирует ответ, подкреплённый фактами.
+
+**Наш pipeline в `RagService.kt` (6 шагов):**
+1. **Embedding запроса:** `EmbeddingService.generateEmbedding(question)` → вектор 1536 измерений (OpenAI `text-embedding-3-small` или `MockEmbeddingService` в dev).
+2. **Vector Search:** `VectorSearchService.searchSimilarDocuments(queryEmbedding, topK=5)` — SQL-запрос к PostgreSQL с pgvector: `ORDER BY embedding <=> :queryVector::vector LIMIT 5`. Оператор `<=>` — cosine distance, `1 - distance` → similarity score [0,1].
+3. **Context Building:** Топ-5 документов конкатенируются в текстовый контекст с метаданными (title, category, similarity score).
+4. **Prompt Construction:** System prompt с инструкциями + user question + retrieved context.
+5. **LLM Call:** `LlmClient.generateCompletion(prompt, systemPrompt)` → ответ от OpenAI GPT-4 (или mock в dev).
+6. **Response:** `AssistantResponse` содержит answer + `List<SourceReference>` (title, category, similarity score каждого использованного документа).
+
+**Индексация:** IVFFlat index на `embedding` колонке с 100 lists (`vector_cosine_ops`). Approximate nearest neighbor — не exact, но в 10-50x быстрее при масштабе >10K документов.
+
+---
+
+### Q68. «Почему pgvector, а не отдельная векторная БД?»
+
+Рассматривали три варианта: pgvector (PostgreSQL extension), Pinecone (managed vector DB), Weaviate (self-hosted).
+
+**Выбрали pgvector:**
+1. **PostgreSQL уже в стеке.** Один инстанс для transfers, outbox, knowledge_documents. Нет дополнительного сервиса для операций.
+2. **Масштаб не требует специализированной БД.** У нас ~500-1000 FAQ-документов (после chunking). pgvector обрабатывает за <10ms. Pinecone оправдан при миллионах векторов.
+3. **ACID-транзакции.** Можем атомарно обновить документ + его embedding в одной транзакции. В Pinecone — eventual consistency.
+4. **Единый backup/restore.** pg_dump включает и бизнес-данные, и embeddings.
+
+**Trade-offs:**
+- pgvector IVFFlat — approximate search (не exact kNN). Для нашего случая (FAQ retrieval) точность достаточна.
+- При >1M векторов pgvector начнёт деградировать. Pinecone/Weaviate масштабируются горизонтально.
+- Нет built-in metadata filtering (в Pinecone — нативно). Мы фильтруем category через WHERE clause.
+
+**Миграции:** V001 `CREATE EXTENSION IF NOT EXISTS vector`, V002 — таблица `knowledge_documents` с `embedding vector(1536)` и IVFFlat index.
+
+---
+
+### Q69. «Как оцениваете качество ответов LLM?»
+
+Три метрики:
+
+**1. Relevance (релевантность):** Similarity score из vector search — если топ-1 документ имеет score < 0.5, контекст слабый, ответ может быть неточным. Логируем scores в `LlmMetrics` для мониторинга.
+
+**2. Faithfulness (верность источникам):** RAG ограничивает модель контекстом — system prompt инструктирует «отвечай только на основе предоставленных документов». Source references в ответе позволяют пользователю верифицировать.
+
+**3. Confidence Score:** Не реализован напрямую, но по similarity score proxy: высокий score (>0.8) → высокая уверенность. Низкий (<0.5) → ответ может содержать галлюцинации. В fallback-режиме (circuit breaker open) — возвращаем только найденные документы без LLM-генерации, что гарантирует 100% faithfulness.
+
+**Мониторинг:** `llm.requests.total` (success/error), `llm.request.duration` (latency), `llm.tokens.used` (cost). Grafana dashboard отслеживает token usage для cost control: GPT-4 стоит ~$30/M input tokens, при 1000 запросов/день — ~$5-10/день.
+
+---
+
+### Q70. «Как устроена отказоустойчивость при вызове LLM API?»
+
+**Circuit Breaker (Resilience4j)** на `RagService.ask()`:
+```
+instance: openai-api
+slidingWindowSize: 10
+failureRateThreshold: 50%
+waitDurationInOpenState: 30s
+permittedNumberOfCallsInHalfOpenState: 3
+```
+
+**Три состояния:**
+- **CLOSED:** Все запросы идут к OpenAI. Если 5+ из 10 последних вызовов failed → переход в OPEN.
+- **OPEN:** Все запросы немедленно идут в fallback (не ждём timeout). Через 30 секунд → HALF_OPEN.
+- **HALF_OPEN:** 3 пробных запроса. Если большинство успешны → CLOSED. Иначе → обратно в OPEN.
+
+**Fallback стратегия (`fallbackAsk()`):**
+1. Попытка vector search без LLM — возвращаем топ-результат как summary. Пользователь получает релевантный документ, хоть и не сгенерированный ответ.
+2. Если даже vector search fails — generic message: «Наш AI-ассистент временно недоступен, обратитесь в поддержку».
+
+**Зачем:** OpenAI API может быть недоступен (rate limit, outage, network). Без circuit breaker — thread pool забивается pending HTTP-запросами с 30s timeout. С CB — fail-fast, ресурсы свободны.
+
+---
+
+### Q71. «Как решали проблему галлюцинаций?»
+
+Три уровня защиты:
+
+**1. RAG (grounding):** Модель отвечает на основе конкретных документов из knowledge base, а не из своих параметров. System prompt: «Отвечай ТОЛЬКО на основе предоставленных документов. Если информация не найдена — скажи "не знаю"».
+
+**2. Source References:** Каждый ответ содержит `List<SourceReference>` — title, category, similarity score документов, которые были использованы. Пользователь может проверить source of truth.
+
+**3. Confidence Threshold:** Если vector search возвращает документы с similarity < 0.5 — ответ помечается как low-confidence. В fallback-режиме (без LLM) — возвращаем только документ, без генерации.
+
+**Trade-off:** RAG ограничивает creativity модели. Для FAQ-бота это ОК — нужны точные ответы, не creative writing. Для open-ended вопросов за пределами knowledge base — модель честно скажет «не знаю», что лучше, чем уверенная галлюцинация.
+
+---
+
+### Q72. «Как реализовали streaming ответов?»
+
+**SSE (Server-Sent Events)** через `GET /api/v1/assistant/ask/stream`:
+
+1. `AssistantController` принимает запрос, вызывает `ragService.askStream(question)`.
+2. `RagService.askStream()` выполняет RAG pipeline (embedding → vector search → context), затем вызывает `llmClient.generateCompletionStream(prompt)`.
+3. `OpenAiClient.generateCompletionStream()` делает HTTP-запрос к OpenAI с `stream: true`. OpenAI отдаёт SSE-поток: каждый chunk содержит `delta.content` (1-3 токена).
+4. Парсим каждый SSE-event: `objectMapper.readTree(data).path("choices")[0].path("delta").path("content")`. Если `data == "[DONE]"` → поток завершён.
+5. Kotlin `Flow<String>` → `.asFlux()` → `Flux<ServerSentEvent<String>>`. Spring WebFlux отправляет клиенту SSE-поток.
+
+**Зачем streaming:** Без streaming пользователь ждёт 5-15 секунд (full LLM generation). Со streaming — первые токены появляются через 200-500ms. UX значительно лучше.
+
+**MockLlmClient:** В dev-профиле разбивает ответ на слова, emit'ит с 50ms delay — эмулирует token-by-token streaming для тестирования.
+
+---
+
+### Q73. «Зачем мониторить token usage?»
+
+**Cost control:** GPT-4 — ~$30/M input tokens, ~$60/M output tokens. При 1000 запросов/день с avg 2000 tokens (prompt + context) — ~$60/month input + ~$30/month output = ~$90/month. Без мониторинга: один баг (бесконечный retry, слишком большой context) может утроить бюджет.
+
+**Метрики в `LlmMetrics.kt`:**
+- `llm.tokens.used` (Counter, tags: type=prompt|completion) — разделение input/output tokens
+- `llm.requests.total` (Counter, tags: type=ask|stream, status=success|error)
+- `llm.request.duration` (Timer) — latency per request
+
+**Grafana dashboard:** Token usage trend, cost projection, anomaly detection. Alert если daily token usage > 2x от baseline.
+
+**Optimization:** Chunking с overlap 50 chars (не 200) — меньше контекста при сохранении semantic continuity. Top-K=5 (не 10) — ограничиваем context window. Эти параметры подобраны для баланса quality vs cost.
+
+---
+
+## Секция 11: ClickHouse и аналитика
+
+### Q74. «Зачем ClickHouse, если есть PostgreSQL?»
+
+**OLTP vs OLAP:** PostgreSQL оптимизирован для OLTP (INSERT, UPDATE, point queries). ClickHouse — для OLAP (агрегации, GROUP BY, columnar scan).
+
+**Пример:** «Объём переводов по коридорам за последний месяц» — `SELECT corridor, count(), sum(send_amount) FROM transfers WHERE created_at > now() - INTERVAL 30 DAY GROUP BY corridor`.
+- PostgreSQL: full table scan (row-based), читает ВСЕ колонки каждой строки → ~2-5 секунд на 1M строк.
+- ClickHouse: columnar scan, читает ТОЛЬКО `corridor`, `send_amount`, `created_at` → ~50-200ms на 1M строк. 10-50x быстрее.
+
+**Почему не заменить PostgreSQL на ClickHouse полностью?** ClickHouse плохо подходит для:
+- Point updates (`UPDATE transfers SET status='COMPLETED' WHERE id=?`) — MergeTree переписывает целые parts
+- ACID-транзакции — нет row-level locking, eventual consistency при merge
+- Foreign keys, constraints — отсутствуют
+
+**CQRS-light:** PostgreSQL для writes (OLTP, ACID, transactions), ClickHouse для reads (OLAP, analytics, dashboards). Kafka как transport между ними.
+
+---
+
+### Q75. «Как данные попадают в ClickHouse?»
+
+ETL pipeline: PostgreSQL → Outbox → Kafka → `AnalyticsEtlConsumer` → ClickHouse.
+
+1. Transfer Service создаёт OutboxEvent с `targetTopic = "transfer.events"`.
+2. Outbox Service публикует JSON-event в Kafka.
+3. `AnalyticsEtlConsumer` (group `analytics-etl-group`) потребляет events и буферизирует в `CopyOnWriteArrayList`.
+4. **Flush triggers:** `buffer.size >= batchSize (100)` ИЛИ `@Scheduled(fixedRate=10000)` (каждые 10 секунд).
+5. `ClickHouseClient.batchInsert()` — batch INSERT через JDBC.
+
+**Зачем batch, а не row-by-row?** ClickHouse оптимизирован для batch INSERT: создаёт MergeTree part на каждый INSERT. 1000 row-by-row INSERT = 1000 parts → merge overhead. 1 batch INSERT (1000 rows) = 1 part → эффективно.
+
+**Метрики:** `etl.events.consumed` (потреблено), `etl.flushes.success` (успешных flush), `etl.flushes.errors` (ошибок). При `flushes.errors > 0` → alert, данные остаются в Kafka (не потеряны).
+
+---
+
+### Q76. «Что такое ReplacingMergeTree?»
+
+ClickHouse MergeTree family — движки хранения для колоночных таблиц. `ReplacingMergeTree` — вариант с дедупликацией.
+
+**Проблема:** Kafka доставляет at-least-once. При replay (consumer restart, rebalance) — дублирующие записи. Обычный MergeTree просто вставит дубль.
+
+**ReplacingMergeTree:** При merge (фоновый процесс) оставляет только одну строку для каждого набора `ORDER BY` ключей. Наш `ORDER BY (corridor, created_at, transfer_id)` — для одного `transfer_id` с одинаковым `created_at` и `corridor` останется одна строка. `event_time` — version column: при дублях сохраняется строка с максимальным `event_time`.
+
+**Важно:** Дедупликация происходит при merge, а не при INSERT. До merge запрос `SELECT count()` может показать дубли. Для точного результата: `SELECT count() FROM transfers_analytics FINAL` — форсирует merge при чтении. Trade-off: FINAL медленнее, но гарантирует корректность.
+
+---
+
+### Q77. «Что такое LowCardinality?»
+
+ClickHouse оптимизация для колонок с малым числом уникальных значений (enum-like).
+
+**Наша схема:** `source_country LowCardinality(String)`, `dest_country`, `corridor`, `send_currency`, `receive_currency`, `delivery_method`, `status` — все LowCardinality.
+
+**Как работает:** Dictionary encoding. Вместо хранения строки `"BANK_DEPOSIT"` (12 bytes) в каждой строке — хранит integer ID (1-2 bytes), а строка — в словаре один раз. При 1M строк с 5 уникальными delivery_method: 12MB → ~2MB (6x сжатие).
+
+**Когда НЕ использовать:** Если уникальных значений > ~10K — dictionary overhead превышает экономию. Для `transfer_id` (UUID, уникален для каждой строки) — обычный String.
+
+**Эффект:** Меньше memory footprint → больше данных в кэше → быстрее GROUP BY. Для нашего dashboard «revenue by corridor» — LowCardinality на `corridor` (10 уникальных значений) даёт ~10x compression и ускорение сканирования.
+
+---
+
+## Секция 12: Terraform и IaC
+
+### Q78. «Как описана инфраструктура?»
+
+**Terraform** — Infrastructure as Code. Вся AWS-инфраструктура описана декларативно в `.tf` файлах.
+
+**Модульная структура:**
+```
+infra/terraform/
+├── backend.tf              # S3 + DynamoDB state backend
+├── modules/
+│   ├── vpc/main.tf         # VPC, subnets, NAT, IGW
+│   ├── eks/main.tf         # EKS cluster, node groups, IAM
+│   ├── rds/main.tf         # PostgreSQL 16, multi-AZ, encryption
+│   └── s3/main.tf          # Data bucket, lifecycle, encryption
+└── environments/
+    ├── dev/main.tf          # Dev: t3.medium, 1-2 nodes, single-AZ
+    └── production/main.tf   # Prod: t3.large, 2-8 nodes, multi-AZ
+```
+
+**Ключевые ресурсы:**
+- **VPC:** 3 Availability Zones, public subnets (ALB, NAT), private subnets (EKS nodes, RDS). NAT Gateway для egress из private subnets.
+- **EKS:** Managed Kubernetes, IAM roles (cluster + node group), auto-scaling node group (desired/min/max configurable).
+- **RDS:** PostgreSQL 16 с pgvector + pg_stat_statements. Encryption at rest (KMS). Multi-AZ в production. Performance Insights enabled. 7-day backup retention.
+- **S3:** Versioning, AES256 encryption, lifecycle (90d → Standard-IA, 365d → Glacier), public access block, TLS-only policy.
+
+---
+
+### Q79. «Как управляете Terraform state?»
+
+**Backend — S3 + DynamoDB:**
+```hcl
+backend "s3" {
+  bucket         = "transferhub-terraform-state"
+  key            = "infrastructure/terraform.tfstate"
+  region         = "us-east-1"
+  dynamodb_table = "terraform-locks"
+  encrypt        = true
+}
+```
+
+**S3 bucket:** Хранит `terraform.tfstate` — JSON с текущим состоянием всех ресурсов. Encryption at rest. Versioning — можно откатиться к предыдущему state.
+
+**DynamoDB table (`terraform-locks`):** Distributed locking. При `terraform apply` — lock запись в DynamoDB. Если другой разработчик запускает `apply` одновременно — получит ошибку «state locked». Предотвращает конкурентную модификацию инфраструктуры.
+
+**Почему не local state?** Local state — файл на машине разработчика. Если потерялся — Terraform не знает о существующих ресурсах → может пересоздать (downtime) или потерять tracking. Remote state — единый source of truth.
+
+**Sensitive data в state:** State содержит passwords, endpoints. S3 encryption + restricted IAM access. Никогда не коммитим state в git.
+
+---
+
+### Q80. «Что будет, если руками изменить ресурс в AWS Console?»
+
+**Drift detection:** При `terraform plan` Terraform сравнивает desired state (`.tf` файлы) с actual state (AWS API). Если кто-то вручную изменил security group rules — plan покажет drift: «security_group_rule will be updated (forced replacement)».
+
+**Три исхода:**
+1. `terraform apply` — перезапишет ручное изменение и приведёт к desired state. Инфраструктура снова соответствует коду.
+2. `terraform import` — если ручное изменение нужно сохранить, обновляем `.tf` файл и импортируем в state.
+3. Игнорирование — плохая практика, но `lifecycle { ignore_changes = [...] }` позволяет Terraform игнорировать определённые атрибуты.
+
+**Наша практика:** Все изменения — только через Terraform (code review → PR → CI → apply). Ручные изменения в Console — только в emergency (P1 incident), с обязательным post-mortem и последующей синхронизацией `.tf` файлов.
+
+---
+
+## Секция 13: Feature Flags, эволюция решений и Behavioral
+
+### Q81. «Как деплоите незавершённые фичи?»
+
+**Unleash Feature Flags** — trunk-based development с feature flags.
+
+**Пример — `new-pricing-algorithm`:** `FeeService.kt` проверяет `unleash.isEnabled("new-pricing-algorithm", context)`. Если flag OFF → legacy pricing (flat fee). Если ON → tiered pricing (TieredFeeCalculator: $0-100 → 1%, $100-500 → 0.8%, $500+ → 0.5%, min $0.99).
+
+**Контекст:** UnleashContext содержит `userId` (senderId) — можно включить flag для конкретных пользователей (beta testers), процента пользователей (Gradual Rollout 5% → 25% → 100%), или по environment (dev ON, prod OFF).
+
+**Зачем:** Код мержится в main каждый день (trunk-based). Без feature flags — либо feature branches (merge hell), либо незавершённая фича видна всем. С flags: код в production, но выключен. Включаем через Unleash UI без деплоя.
+
+**Метрики:** `pricing.fee.calculation.total` с tag `algorithm=tiered|legacy` — мониторим, какой процент трафика идёт через новый алгоритм. Если tiered pricing показывает anomalies — мгновенный rollback через Unleash UI (секунды, не минуты деплоя).
+
+---
+
+### Q82. «Как делаете canary release?»
+
+**Gradual Rollout через Unleash:**
+1. **5%:** Включаем `new-pricing-algorithm` для 5% пользователей. Мониторим Grafana: error rate, latency, business metrics (average fee, conversion).
+2. **25%:** Если метрики стабильны 24 часа → увеличиваем до 25%.
+3. **100%:** Если стабильно 48 часов → полный rollout. Удаляем feature flag из кода (cleanup).
+
+**Kubernetes-level canary:** Не используем (Unleash покрывает). Но возможен с Argo Rollouts: 2 ReplicaSets (stable + canary), traffic split через Ingress. Для нашего масштаба Unleash проще.
+
+**Rollback:** Если на 25% обнаружили проблему — один клик в Unleash UI → flag OFF → 0% за секунды. Быстрее, чем `helm rollback` (минуты) или git revert + CI + deploy (десятки минут).
+
+---
+
+### Q83. «Расскажите про эволюцию решения»
+
+**Situation:** В Sprint 3 использовали Spring Kafka `@RetryableTopic` для retry в Notification consumer. Просто, одна аннотация.
+
+**Task:** QA обнаружил: уведомления приходят в неправильном порядке. «Перевод завершён» перед «Оплата подтверждена».
+
+**Action:** Проанализировали root cause: `@RetryableTopic` перемещает failed message в retry-topic, но следующие messages из основного топика продолжают обрабатываться. Event A (failed) → retry-topic. Event B → обработан сразу. Пользователь получает B перед A.
+
+Разработали Redirect & Retry Pattern:
+1. При ошибке Event A для transfer_123 → добавляем transfer_123 в redirect set → Event A в retry-topic
+2. Event B для transfer_123 → проверяем redirect set → перенаправляем в retry-topic (без обработки)
+3. Retry consumer обрабатывает последовательно: A → B → clear redirect
+
+Написали ADR, согласовали с Notifications-командой на sync-встрече, реализовали через TDD (RedirectRetryIntegrationTest).
+
+**Result:** Ordering гарантирован. Retry с прогрессивным backoff (30s → 2min → 10min → 30min → 1h). DLT после 5 попыток. Паттерн переиспользован в других consumer'ах.
+
+**Lesson:** Простое решение (аннотация) не всегда правильное. Для финансовых нотификаций ordering > simplicity.
+
+---
+
+### Q84. «Как вы справлялись с конфликтующими приоритетами?»
+
+**Situation:** Sprint 4, середина. Product Owner (Alex) требует новую фичу — multi-currency support для нового коридора GB→IN. Одновременно DevOps (Maria) эскалирует: memory leak на staging (Transfer Service OOM через 36 часов). Velocity — 25 SP, обе задачи по ~8 SP.
+
+**Task:** Определить приоритет при ограниченном бюджете спринта.
+
+**Action:** Организовал meeting с Alex, Maria и Tech Lead (Daniel). Аргументы:
+- Memory leak: если не починить → staging нестабилен → QA не может тестировать → блокирует ВСЕ фичи. Timeline: через 2 дня staging упадёт.
+- Multi-currency: бизнес-ценность, но не blocking. GB→IN может подождать неделю.
+
+Daniel принял решение: memory leak — P1, GB→IN — следующий спринт. Alex согласился (disagree and commit): «Понимаю, staging важнее, но хочу GB→IN в Sprint 5».
+
+**Result:** Memory leak исправлен за 2 дня (ConcurrentHashMap → Caffeine). GB→IN реализован в Sprint 5 без задержек. Staging стабилизирован: heap 450MB вместо 2.1GB. Alex добавил правило: «P1 tech debt автоматически выше любой фичи».
+
+---
+
+### Q85. «Расскажите про ситуацию, когда Sprint Goal не был достигнут»
+
+**Situation:** Sprint 3 Goal: «Payment Saga полностью работает end-to-end с retry и compensation». К середине спринта обнаружили: @RetryableTopic нарушает ordering нотификаций (Q83). Redesign Redirect & Retry потребовал дополнительных ~8 SP (ADR, design review, реализация, тесты).
+
+**Task:** Либо доставить Sprint Goal с известным багом ordering, либо скорректировать scope.
+
+**Action:** На daily standup обсудили ситуацию. Решение: ordering для финансовых нотификаций — must-have, нельзя деплоить с известным defect. Убрали из спринта lower-priority items (Grafana dashboard enhancements, 3 SP). Redirect & Retry реализовали, но integration tests для compensation path перенесли в Sprint 4.
+
+**Result:** Sprint Goal частично достигнут: Payment Saga работает end-to-end, retry корректен, но compensation flow не полностью покрыт тестами. Velocity спринта: 22 SP (вместо planned 25).
+
+**Retro action items:** 1) Добавить «risk assessment» к крупным задачам на Planning. 2) Buffer 3-5 SP на непредвиденные сложности. 3) Ordering-sensitive components — всегда integration test с ordering verification.
+
+---
+
+### Q86. «Что было самым неожиданным за время проекта?»
+
+**Situation:** Memory leak в Transfer Service. Сервис работал стабильно 4 месяца. После нагрузочного тестирования (подняли throughput с 100 до 1000 transfers/hour) — heap начал расти линейно.
+
+**Почему неожиданно:**
+1. Код review не выявил проблему — `ConcurrentHashMap` выглядит нормально, thread-safe.
+2. Unit tests не ловят memory leaks — тест создаёт 10 объектов, не 4.2 миллиона.
+3. Проблема проявилась только под нагрузкой + временем (36 часов).
+
+**Lesson learned:**
+1. **Soak testing** — не только пиковая нагрузка, но и sustained load на часы. Добавили 4-часовой soak-test в CI.
+2. **Bounded by default** — правило: любой in-memory collection должен быть bounded (Caffeine/Guava cache с maxSize + TTL). В code review checklist.
+3. **Monitoring memory trend** — не только текущий heap %, но и rate of change. Если heap растёт линейно 2 часа — alert до OOM.
+
+Этот инцидент превратился в одну из лучших STAR-историй для собеседований: конкретная проблема → системный подход к debugging (heap dump, MAT) → fix с метриками → процессные улучшения.

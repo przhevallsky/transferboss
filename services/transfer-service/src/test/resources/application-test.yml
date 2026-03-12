@@ -13,6 +13,11 @@ consul:
     enabled: false
 
 spring:
+  main:
+    allow-bean-definition-overriding: true
+  autoconfigure:
+    exclude:
+      - io.github.resilience4j.springboot3.micrometer.autoconfigure.TimerAutoConfiguration
   flyway:
     clean-disabled: false
     enabled: true

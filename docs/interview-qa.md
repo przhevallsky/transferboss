@@ -734,3 +734,430 @@ Outbox Service деплоится в 2-4 Pod'а для высокой досту
 **Polling interval:** 500ms (`outbox.polling.interval-ms`). Batch size: 100 (`outbox.polling.batch-size`). При 2 Pod'ах — throughput ~400 events/sec (200 per Pod per second). Масштабируется линейно с количеством Pod'ов.
 
 **Метрики:** Outbox Service публикует `kafkaTopic` и `kafkaOffset` при успешной отправке — можно верифицировать, что событие действительно в Kafka.
+
+---
+
+## Секция 6: Docker и Kubernetes
+
+### Q43. «Как устроен ваш Dockerfile?»
+
+Все JVM-сервисы используют multi-stage build с двумя стадиями:
+
+**Stage 1 — Builder:** `eclipse-temurin:21-jdk-alpine` (полный JDK для компиляции). Сначала копируем Gradle wrapper и конфигурацию (build.gradle.kts, settings.gradle.kts, gradle/) — этот слой кэшируется между билдами. Затем `./gradlew dependencies` — скачивание зависимостей (кэшируется если pom не изменился). Последним копируем исходный код и запускаем `./gradlew bootJar`.
+
+**Stage 2 — Runtime:** `eclipse-temurin:21-jre-alpine` (только JRE, ~100MB вместо ~300MB). Создаём non-root пользователя (`appuser:appgroup`). Копируем JAR из builder stage. ENTRYPOINT с JVM-флагами: `-XX:MaxRAMPercentage=75.0` (использовать 75% от container memory limit), `-Djava.security.egd=file:/dev/./urandom` (быстрая инициализация SecureRandom).
+
+**Notification Gateway (Go):** `golang:1.23-alpine` → `scratch` (пустой базовый образ). Статическая линковка (`CGO_ENABLED=0`), копируем CA-сертификаты для HTTPS. Итог: ~15MB образ vs ~200MB для JVM. Запуск от UID 65534 (nobody).
+
+**HEALTHCHECK:** Все Dockerfiles содержат `HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD wget -qO- http://localhost:{port}/actuator/health/liveness || exit 1`.
+
+**Layer optimization:** Порядок COPY инструкций от наименее до наиболее изменяемых файлов. Gradle config → dependencies → source code. При изменении только бизнес-кода — пересобирается только последний слой.
+
+---
+
+### Q44. «Чем liveness probe отличается от readiness?»
+
+**Liveness probe** — «жив ли процесс?» Если fails 3 раза подряд — Kubernetes убивает Pod и перезапускает (restartPolicy). Путь: `/actuator/health/liveness`. Interval 10s, initialDelay 30s (даём JVM прогреться), failureThreshold 3.
+
+**Readiness probe** — «готов ли принимать трафик?» Если fails — Kubernetes убирает Pod из Service endpoints (не отправляет запросы), но НЕ перезапускает. Путь: `/actuator/health/readiness`. Interval 5s, initialDelay 15s, failureThreshold 3.
+
+**Startup probe** — «завершилась ли инициализация?» Пока startup probe не пройдёт — liveness и readiness не проверяются. Путь: `/actuator/health/liveness`, failureThreshold 30, period 1s. Даём JVM-сервису 30 секунд на старт (Flyway миграции, Spring context initialization, Kafka consumer group join).
+
+**Пример неправильной настройки:** Если liveness probe проверяет зависимости (DB, Redis) — при падении PostgreSQL Kubernetes перезапустит ВСЕ Pod'ы Transfer Service. Это каскадный fail: Pod'ы рестартуются, не могут подключиться к DB, снова fail. Правильно: liveness = процесс жив, readiness = зависимости доступны. При падении DB — Pod'ы остаются живыми, но убираются из endpoints.
+
+---
+
+### Q45. «Как обеспечивается zero-downtime деплой?»
+
+Rolling update strategy в Helm deployment:
+```yaml
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0    # Ни один Pod не убивается до создания нового
+    maxSurge: 1          # Создаём 1 дополнительный Pod
+```
+
+**Процесс:** K8s создаёт новый Pod → ждёт startup probe → ждёт readiness probe → убирает старый Pod. `maxUnavailable: 0` гарантирует: всегда есть минимум N работающих Pod'ов.
+
+**preStop hook** (не реализован в текущем Helm, но обсуждался): `sleep 5` перед SIGTERM — даёт kube-proxy время обновить iptables rules. Без этого: Pod получает SIGTERM, kube-proxy ещё не обновил routing → некоторые запросы идут на умирающий Pod.
+
+**Graceful shutdown:** `server.shutdown: graceful` в `application.yml` — Spring Boot ждёт завершения in-flight запросов (default 30s) перед остановкой. Kafka consumer отдаёт партиции через cooperative rebalance (не stop-the-world).
+
+**Kafka consumer rebalance:** `CooperativeStickyAssignor` — при добавлении/удалении Pod'а только затронутые партиции мигрируют. Остальные consumer'ы продолжают работать без прерывания.
+
+---
+
+### Q46. «Как рассчитываете resource requests/limits для JVM?»
+
+Формула: `container memory limit = Xmx + Metaspace + Thread stacks + Native memory + OS overhead`.
+
+**Наши значения (Transfer Service):**
+- Request: 512Mi (гарантированный minimum, scheduler учитывает при размещении)
+- Limit: 1Gi (maximum, OOMKilled при превышении)
+- CPU: 250m request, 1000m limit
+
+**JVM tuning:** `-XX:MaxRAMPercentage=75.0` — JVM использует 75% от container limit для heap. При limit 1Gi: heap ≤ 768MB. Оставшиеся 256MB — Metaspace (~100MB), thread stacks (256KB × 200 threads = ~50MB), NIO buffers, JIT code cache.
+
+**Outbox Service:** 256Mi/512Mi — меньше: нет REST API, нет cache, только polling + publish.
+
+**Notification Gateway (Go):** 64Mi/128Mi — Go garbage collector более предсказуем, нет JVM overhead. ~15MB binary + goroutine stacks.
+
+**HPA:** Transfer Service: 2-8 Pod'ов (CPU > 60%). Outbox Service: 1-3 Pod'а (kafka_consumergroup_lag > 1000). Pricing Service: 2-6 Pod'ов (CPU > 60%). HPA ограничение: для Kafka consumer'ов max Pod'ов ≤ количество партиций (12 партиций = max 12 consumer'ов).
+
+---
+
+### Q47. «Что такое Helm и зачем?»
+
+Helm — пакетный менеджер для Kubernetes. Шаблонизирует YAML-манифесты, управляет релизами.
+
+**Наша структура:** 4 Helm-чарта (transfer-service, outbox-service, pricing-service, notification-gateway). Каждый содержит: `Chart.yaml` (метаданные, version), `values.yaml` (defaults), `values-staging.yaml`, `values-production.yaml`, `templates/` (deployment, service, hpa, configmap).
+
+**Зачем templates:** Один `deployment.yaml` с `{{ .Values.replicaCount }}`, `{{ .Values.image.tag }}`, `{{ .Values.resources.limits.memory }}`. Для staging: `helm install -f values-staging.yaml`, для production: `helm install -f values-production.yaml`. Без Helm — дублирование YAML для каждого окружения.
+
+**Environment differences:**
+- Staging: replicaCount 1, resources 256Mi/512Mi, HPA disabled
+- Production: replicaCount 2, resources 512Mi/1Gi, HPA enabled (2-8 pods)
+
+**Release management:** `helm upgrade --install` — idempotent deploy. `helm rollback` — откат к предыдущей версии за секунды. `helm history` — аудит всех деплоев.
+
+---
+
+### Q48. «Как управляете конфигурацией и секретами?»
+
+Три уровня:
+
+**1. ConfigMap (non-sensitive config):** Генерируется из Helm `templates/configmap.yaml`. Содержит: `SPRING_PROFILES_ACTIVE`, `SERVER_PORT`, `KAFKA_BOOTSTRAP_SERVERS`, `CONSUL_HOST`. Монтируется как environment variables в Pod.
+
+**2. Kubernetes Secrets (sensitive, at-rest encryption):** Database passwords, JWT signing keys, API tokens. В production — через External Secrets Operator: Vault (HashiCorp) → ExternalSecret CRD → Kubernetes Secret. Разработчик не видит plaintext secrets.
+
+**3. application.yml defaults + override:** Spring Boot property hierarchy: `application.yml` → environment variables → command-line args. Docker Compose использует environment override: `SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/transferhub`. Kubernetes — через ConfigMap envFrom.
+
+**Текущее состояние (development):** Secrets в docker-compose.yml как environment variables (plaintext). Для production — Vault + External Secrets. Trade-off: в dev-окружении приоритет — простота запуска (`docker compose up -d`), а не security.
+
+---
+
+## Секция 7: Observability
+
+### Q49. «Какой observability стек?»
+
+Четыре столпа в одном UI (Grafana):
+
+**Prometheus (v2.50)** — метрики. Scrape interval 15s (global), 10s (services). Pull-model: Prometheus забирает метрики по HTTP (`/actuator/prometheus` для JVM, `/metrics` для Go). Alert rules в `alert-rules.yml`: 8+ правил с severity routing.
+
+**Grafana (v10.3)** — визуализация. 3 дашборда: Transfer Service (RED metrics, business metrics), Kafka (consumer lag, DLT), Infrastructure (JVM heap, GC, HikariCP, Go goroutines). Datasources: Prometheus, Loki, Tempo, ClickHouse. Exemplars: клик по точке на графике → trace в Tempo.
+
+**Loki (v2.9.4)** — логи. Promtail собирает Docker logs, парсит JSON (level, logger, message, traceId, spanId). Retention 7 дней. Запрос: `{service="transfer-service"} |= "error" | json | traceId != ""`. Корреляция: traceId из лога → ссылка на Tempo trace.
+
+**Tempo (v2.3.1)** — distributed tracing. OTLP receivers (gRPC 4317, HTTP 4318). Spring Boot + Micrometer → OpenTelemetry → Tempo. W3C Trace Context propagation через HTTP headers и Kafka headers (`observation-enabled: true`). Service graph: визуализация зависимостей между сервисами.
+
+**Единый workflow:** Grafana alert → click metric → exemplar → Tempo trace → click span → Loki logs (filtered by traceId). Весь путь от «что-то сломалось» до «вот конкретная строка лога» — в одном UI.
+
+---
+
+### Q50. «Как от алерта добраться до root cause?»
+
+**Пример: Alert `HighLatency` (p99 > 500ms на Transfer Service).**
+
+1. **Alert → Grafana:** Alertmanager отправляет в Slack (P2). Открываем Grafana, видим spike на панели «Latency p99» в дашборде Transfer Service.
+
+2. **Metric → Exemplar:** На графике включены exemplars. Кликаем на точку spike — Grafana показывает `traceId=abc123`. Кнопка «View in Tempo».
+
+3. **Trace → Tempo:** Видим полный trace: `POST /api/v1/transfers` (200ms) → `gRPC ValidateQuote` (15ms) → `PostgreSQL INSERT` (8ms). Но есть span `IdentityClient.checkKyc` — 480ms! Это bottleneck.
+
+4. **Span → Logs:** Кликаем на span → «View in Loki». Запрос: `{service="transfer-service"} | json | traceId="abc123"`. Видим: `WARN IdentityClient - Slow response from identity service: 480ms, status=200`.
+
+5. **Root Cause:** Identity Service деградирует. Проверяем его метрики — database connection pool exhausted. Fix: увеличить pool size или добавить circuit breaker timeout.
+
+**Ключевое:** W3C Trace Context пробрасывается через ВСЕ коммуникации — REST, gRPC, Kafka. Один traceId связывает запрос через 3-4 сервиса. Без distributed tracing — grep по логам всех сервисов вручную.
+
+---
+
+### Q51. «Почему Loki, а не ELK?»
+
+**Loki выбрали по трём причинам:**
+
+**1. Стоимость:** Loki индексирует только метаданные (labels: service, level), не полный текст логов. Elasticsearch индексирует каждое слово (inverted index). При 50GB логов/день: Loki — ~5GB storage, ELK — ~50GB+. Для нашего масштаба (~5 сервисов, ~10GB/day) разница не критична, но принцип масштабируется.
+
+**2. Единый UI:** Grafana — один интерфейс для метрик (Prometheus), логов (Loki), трейсов (Tempo). ELK — отдельный Kibana. Для команды из 7 человек один инструмент → меньше cognitive load, быстрее onboarding.
+
+**3. Операционная простота:** Loki = один бинарник, local storage или S3. ELK = Elasticsearch (JVM, требует тюнинг), Logstash (pipeline config), Kibana. Три компонента vs один.
+
+**Когда ELK лучше:** Full-text search по логам (Loki — regex по содержимому, не inverted index). Сложные аналитические запросы (Elasticsearch aggregations мощнее). Если уже есть ELK-экспертиза в команде.
+
+---
+
+### Q52. «Как distributed tracing через Kafka?»
+
+**Проблема:** HTTP-трейсинг прост: W3C `traceparent` header передаётся от клиента к серверу. Но Kafka — асинхронный: producer отправляет, consumer читает через секунды/минуты. Как связать?
+
+**Решение:** Spring Kafka `observation-enabled: true` на listener и template. Micrometer автоматически:
+1. **Producer:** Извлекает текущий trace context и записывает в Kafka record headers (`traceparent`, `tracestate`).
+2. **Consumer:** При получении сообщения читает headers, создаёт child span с parent из headers.
+
+**Конфигурация:**
+```yaml
+spring.kafka:
+  listener.observation-enabled: true
+  template.observation-enabled: true
+management.tracing:
+  sampling.probability: 1.0   # 100% sampling
+  propagation.type: w3c
+```
+
+**Результат в Tempo:** Trace начинается с `POST /api/v1/transfers` (Transfer Service), включает gRPC-вызов к Pricing, затем — Kafka publish через Outbox. Отдельный span для `PaymentEventConsumer.consume()` связан с тем же traceId. Можно увидеть полный lifecycle перевода: REST → DB → Kafka → Payment → Kafka → Payout → Complete.
+
+**Ограничение:** Go Notification Gateway не использует OpenTelemetry SDK — трейсы обрываются на границе Go-сервиса. Trade-off: добавить OTEL Go SDK увеличило бы сложность для простого fan-out сервиса.
+
+---
+
+### Q53. «Какие алерты настроены?»
+
+8 правил в `alert-rules.yml`, разделённых по severity:
+
+**Critical (P1 → PagerDuty):**
+- `CriticalErrorRate`: >5% HTTP 5xx за 2 минуты. Что-то серьёзно сломано.
+- `CriticalConsumerLag`: Kafka lag >50K за 10 минут. Consumer мёртв или Kafka деградирует.
+
+**Warning (P2 → Slack):**
+- `HighErrorRate`: >1% HTTP 5xx за 5 минут. Начинаются проблемы.
+- `HighLatency`: p99 >500ms за 5 минут. Деградация производительности.
+- `CircuitBreakerOpen`: CB state = OPEN (immediate). Внешний сервис недоступен.
+- `HighConsumerLag`: Kafka lag >10K за 5 минут. Consumer отстаёт.
+- `DLTMessagesPresent`: Сообщения в Dead Letter Topic. Потенциальная потеря данных.
+- `HighMemoryUsage`: JVM heap >80% за 5 минут. Возможная утечка памяти.
+
+**Routing:** Alertmanager группирует по `alertname` + `service`. Group wait 30s (не спамить при массовом сбое). Repeat interval 4h (не будить ночью повторно).
+
+---
+
+### Q54. «Какие дашборды? Какие метрики ключевые?»
+
+**3 дашборда в Grafana:**
+
+**1. Transfer Service Dashboard:**
+- **RED metrics:** Request Rate (req/s), Error Rate (%), latency p50/p95/p99
+- **Business metrics:** Transfers Created by Corridor (US_PH, US_MX, GB_IN), Completed vs Failed ratio, Completion Time p95
+- Ключевая метрика: **Error Rate** — если >1% → что-то не так
+
+**2. Kafka Dashboard:**
+- **Consumer Lag by Group** — самая важная: если растёт → consumer не справляется
+- **Messages In Rate by Topic** — throughput
+- **DLT Messages** — должен быть 0, любое значение > 0 → alert
+- **Listener Duration p95/p99** — как долго обрабатывается одно сообщение
+
+**3. Infrastructure Dashboard:**
+- **JVM Heap** (Used vs Max) по сервисам — мониторинг утечек памяти
+- **GC Pause Duration** — если p99 > 100ms → проблема
+- **HikariCP Active/Pending Connections** — если pending > 0 → pool exhaustion
+- **Go Goroutines** (Notification Gateway) — рост → goroutine leak
+
+**ClickHouse Analytics Dashboard:** Transfer volume by corridor, revenue by corridor, success rate trend — бизнес-метрики для product team.
+
+---
+
+## Секция 8: Security
+
+### Q55. «Как защищён API?»
+
+Три уровня защиты:
+
+**1. JWT Authentication (RS256):** `SecurityConfig.kt` настраивает NimbusJwtDecoder с RSA public key. Клиент получает JWT через `/auth/token`, передаёт в `Authorization: Bearer <token>`. JWT содержит claims: `sub` (userId), `roles` (array: SENDER, OPERATOR, ADMIN). Spring Security извлекает roles и маппит в `ROLE_*` authorities.
+
+**2. RBAC (Role-Based Access Control):** Endpoint protection через `authorizeHttpRequests`:
+- `/actuator/**`, `/swagger-ui/**`, `/api-docs/**`, `/auth/**` → permitAll
+- `/api/v1/**` → authenticated (любая роль)
+- Всё остальное → denyAll
+
+Роли: SENDER (создание переводов, просмотр своих), OPERATOR (просмотр всех, изменение статусов), ADMIN (полный доступ). Контроллер дополнительно проверяет ownership: sender видит только свои переводы.
+
+**3. Rate Limiting (Redis):** `RateLimitFilter` — sliding window через Redis Lua script. 100 req/min для authenticated, 20 req/min для anonymous (по IP). При превышении → 429 Too Many Requests + headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `Retry-After: 60`.
+
+**Session Policy:** STATELESS — сервер не хранит сессии. Каждый запрос несёт JWT. CSRF disabled (нет cookies → нет CSRF-атак).
+
+**Error responses:** RFC 9457 Problem Details: при 401 и 403 — structured JSON с `type`, `title`, `status`, `detail`.
+
+---
+
+### Q56. «Как работает rate limiting?»
+
+**Алгоритм — Redis Sliding Window** (Lua script для атомарности):
+
+1. Key: `rate_limit:user:{username}` (authenticated) или `rate_limit:ip:{ip}` (anonymous)
+2. Redis ZSET (sorted set): score = timestamp, member = unique request ID
+3. `ZREMRANGEBYSCORE` — удалить все записи старше окна (60 секунд)
+4. `ZCARD` — посчитать оставшиеся (текущий count за окно)
+5. Если count < limit → `ZADD` новую запись → разрешить запрос
+6. Если count >= limit → отклонить с 429
+7. `EXPIRE` key на window duration — cleanup
+
+**Почему Lua script:** Атомарность. Без Lua: между ZCARD и ZADD другой запрос может проскочить → превышение лимита. Lua script выполняется атомарно на Redis-сервере.
+
+**Почему Sliding Window, а не Fixed Window:** Fixed Window (100 req/min, сброс каждую минуту) → burst: 100 запросов в последнюю секунду минуты + 100 в первую секунду следующей = 200 за 2 секунды. Sliding Window — равномерное распределение.
+
+**Fail-open:** При `RedisConnectionException` — запрос пропускается (не блокируется). Лучше допустить превышение, чем отказать всем при падении Redis.
+
+**Exclusions:** `/actuator` (health checks), `/auth` (получение токена), `/swagger-ui`, `/api-docs`.
+
+---
+
+### Q57. «Как маскируете PII в логах?»
+
+`PiiMaskingConverter.kt` — custom Logback converter, зарегистрированный как `%piiMask(%msg)` в logback pattern.
+
+**Паттерны маскирования:**
+- **Email:** `user@example.com` → `u***@example.com` (первая буква + маска + домен)
+- **Phone:** `+1234567890` → `***7890` (последние 4 цифры)
+- **SSN:** `123-45-6789` → `***-**-6789`
+- **Card number:** `4111-1111-1111-1234` → `****-****-****-1234` (последние 4 цифры)
+
+**Как работает:** Regex-паттерны применяются к каждому log message перед записью. `ClassicConverter` из Logback: `convert(ILoggingEvent)` → проверяет message через цепочку regex → заменяет совпадения на маскированные значения.
+
+**Зачем:** GDPR, PCI DSS compliance. Логи попадают в Loki, хранятся 7 дней, доступны всей команде. PII в логах — нарушение. Автоматическое маскирование лучше, чем надеяться, что разработчик не залогирует email.
+
+**Trade-off:** Regex-маскирование на каждое лог-сообщение — overhead ~1-2μs. При 10K logs/sec — 10-20ms total, пренебрежимо.
+
+---
+
+### Q58. «Как управляете секретами?»
+
+**Development (Docker Compose):** Environment variables в `docker-compose.yml`: `POSTGRES_PASSWORD=transferhub`. Допустимо для локальной разработки — secrets не покидают машину разработчика. `.env` файл в `.gitignore`.
+
+**Production (Kubernetes):** Трёхуровневая модель:
+1. **HashiCorp Vault:** Центральное хранилище секретов. Audit log, dynamic secrets (DB credentials с TTL), rotation.
+2. **External Secrets Operator:** CRD `ExternalSecret` описывает какой секрет из Vault замапить в Kubernetes Secret. Operator синхронизирует автоматически.
+3. **Kubernetes Secret:** Монтируется в Pod как environment variable или volume. At-rest encryption (KMS).
+
+**RSA Keys (JWT):** Public key для JWT-верификации хранится в classpath (`classpath:keys/public.pem`) или filesystem path. Private key (для подписи) — только в Auth Service, хранится в Vault.
+
+**Terraform:** S3 backend для state (содержит sensitive values). DynamoDB для state locking. State bucket с encryption at rest и TLS enforcement.
+
+---
+
+## Секция 9: Процессы и команда
+
+### Q59. «Как была организована работа?»
+
+**Scrum:** Двухнедельные спринты. Velocity ~25 Story Points. Ceremonies: Sprint Planning (2h), Daily Standup (15min), Sprint Review (1h), Retrospective (1h).
+
+**Канбан-доска:** To Do → In Progress → Code Review → QA → Done. WIP limit: 2 задачи на разработчика (не начинать новое, пока текущее не в Review).
+
+**Definition of Ready (для задач):** User story с acceptance criteria, tech dependencies определены, estimated (Fibonacci: 1,2,3,5,8,13).
+
+**Definition of Done (для PR):** Код + unit tests + integration tests + Flyway-миграции (если есть schema changes) + обновлённая документация + code review approved + CI green.
+
+**Branching:** Trunk-based development. Feature branches от main, PR → code review → merge в main. Нет develop/staging branches — main всегда deployable.
+
+---
+
+### Q60. «Как проходил code review?»
+
+**Правило 4 часов:** От создания MR до первого review — максимум 4 часа в рабочее время. Это commitment команды, чтобы PR не висели днями.
+
+**Что проверяет reviewer:**
+1. **Бизнес-логика:** Правильно ли реализовано требование? Edge cases?
+2. **Тесты:** Покрыты ли happy path + error paths? Есть ли integration test для нового endpoint?
+3. **Security:** Нет SQL injection (parameterized queries only), нет hardcoded secrets, PII не логируется
+4. **Performance:** Bounded collections? N+1 queries? Missing index?
+5. **Migrations:** Backward-compatible? Нет destructive ALTER?
+
+**Минимум 1 approve** для merge. Архитектурные решения (новый сервис, новый паттерн) — 2 approvals, один от Tech Lead (Daniel).
+
+**Формат комментариев:** `nit:` (мелочь, не блокирует), `question:` (нужно объяснение), `blocker:` (не merge'ить пока не исправлено). Это снижает friction — reviewer сразу обозначает severity.
+
+---
+
+### Q61. «Расскажите про ретроспективу и улучшение»
+
+**Situation:** На ретроспективе после Sprint 2 QA (Alex) отметил: два бага добрались до staging, которые были бы пойманы integration tests. Оба — несоответствие Hibernate entity mapping и Flyway-миграции.
+
+**Task:** Предотвратить подобные баги в будущем.
+
+**Action:** Обсудили на ретро, провели голосование. Решение:
+1. Добавили `ddl-auto: validate` — Hibernate валидирует entity mapping против реальной схемы при старте. Если не совпадает — fail-fast.
+2. Integration tests обязательны в Definition of Done: каждый PR с миграцией должен иметь Testcontainers-тест, который поднимает PostgreSQL, применяет миграции, валидирует маппинг.
+3. CI gate: если integration tests не pass — merge blocked.
+
+**Result:** За следующие 5 спринтов — 0 багов, связанных с schema mismatch. Testcontainers поймали баг с `CHAR(N)` vs `bpchar` (PostgreSQL internal type) до того, как он попал в staging. Время на CI увеличилось на 30 секунд (контейнер PostgreSQL), но ROI очевиден.
+
+---
+
+### Q62. «Как взаимодействовали с другими командами?»
+
+Три точки взаимодействия:
+
+**Payments Team:** Определяли контракт Kafka-событий (`payments.payment.captured`, `payments.payment.failed`). Формат: JSON с обязательными полями (`event_id`, `transfer_id`, `amount`, `timestamp`). Изменения — через RFC: описание, мотивация, migration plan, переходный период (обе версии payload поддерживаются 2 недели).
+
+**Identity Team:** REST API контракт для KYC check. Мы — consumer, они — provider. Circuit breaker на нашей стороне (`identity-service`, `slowCallDuration=1s`). При деградации Identity — мы fail-fast (не зависаем).
+
+**DevOps (Maria):** Совместная работа над Helm charts, CI pipeline, monitoring. Мы определяем требования (health endpoints, metrics, resource estimates), Maria реализует инфраструктуру. Prometheus alert rules — совместно: мы знаем business thresholds, Maria — routing и notification channels.
+
+**Sync-встречи:** Раз в неделю — cross-team sync (30 min). Обсуждение: breaking changes, shared infrastructure, upcoming deployments.
+
+---
+
+### Q63. «Как работали с техническим долгом?»
+
+**Отдельный бэклог:** Tech debt items в отдельной колонке на доске. Каждый item — с описанием проблемы, impact, estimated effort.
+
+**Бюджет:** 15-20% каждого спринта — на tech debt. Из 25 SP: ~4-5 SP на tech debt. Если sprint overloaded фичами — tech debt сдвигается, но не более 2 спринтов подряд.
+
+**Приоритизация (Alex как арбитр):** При конфликте «новая фича vs tech debt» — Alex (QA/PM) принимает решение на основе impact. Пример: memory leak в ConcurrentHashMap — P1 tech debt (OOM через 36 часов), выше любой фичи. Добавление Schema Registry — P3 (nice to have, работает и без него).
+
+**Примеры tech debt, который мы закрыли:**
+- ConcurrentHashMap → Caffeine (Sprint 6, P1)
+- @RetryableTopic → Redirect & Retry (Sprint 4, P1)
+- Missing integration tests → Testcontainers в DoD (Sprint 3, P2)
+- Hardcoded corridor configs → MongoDB/config (Sprint 2, P3)
+
+---
+
+### Q64. «Как принимались архитектурные решения?»
+
+**Процесс:**
+1. **Proposal:** Разработчик (или Tech Lead) пишет proposal: problem, options (2-3 альтернативы), trade-offs, recommendation.
+2. **Design Review:** 30-минутная встреча с командой. Обсуждение trade-offs, вопросы, concerns.
+3. **Decision:** Tech Lead (Daniel) принимает окончательное решение. Если консенсус — ОК. Если нет — Daniel has final say (disagree and commit).
+4. **ADR (Architecture Decision Record):** Решение документируется: Context, Options, Decision, Consequences. 12+ ADR за проект.
+
+**Пример — ADR-007 (Ktor для Pricing):**
+- Context: Pricing — stateless, compute-heavy, gRPC
+- Options: Spring Boot (consistency), Ktor (lightweight, coroutines), Micronaut (compile-time DI)
+- Decision: Ktor — lightweight, native coroutines, DSL routing, ~40MB image
+- Consequences: Меньше ecosystem, нет Spring Data, отдельный learning curve
+
+**Принцип:** Reversible decisions — быстро, один approve. Irreversible (new database, new language) — дольше, 2 approvals, ADR обязательно.
+
+---
+
+### Q65. «Какой был workflow задачи от бэклога до production?»
+
+**7 шагов:**
+1. **Backlog:** Product Owner (Alex) приоритизирует. Story с acceptance criteria.
+2. **Sprint Planning:** Команда берёт задачи, оценивает (Fibonacci), определяет Sprint Goal.
+3. **In Progress:** Разработчик создаёт feature branch от main. Пишет код + тесты + миграции.
+4. **Code Review:** PR в main. CI запускается автоматически. Reviewer назначается. Правило 4 часов.
+5. **QA:** Alex проверяет на staging (docker compose с production-like данными). Acceptance criteria validated.
+6. **Merge:** PR merge в main. CI повторно (main branch). Docker image tagged с git SHA.
+7. **Deploy:** Helm upgrade на staging → smoke tests → production (rolling update, zero-downtime).
+
+**Cycle time:** От начала работы до merge — 1-3 дня. От merge до production — часы (CD pipeline).
+
+**Rollback:** `helm rollback` — предыдущая версия за 30 секунд. Kafka consumer lag может вырасти при rollback consumer-breaking change — мониторим.
+
+---
+
+### Q66. «Как устроен on-call?»
+
+**Ротация:** 4 человека (я, два backend-разработчика, DevOps Maria). 1 неделя on-call, потом 3 недели off. Handoff — пятница, 30-минутный sync: текущие issues, watch items.
+
+**Severity:**
+- **P1 (Critical):** Система недоступна или теряет данные. Response: 15 min. Пример: OOM kill Transfer Service, Kafka cluster down.
+- **P2 (High):** Деградация, но работает. Response: 1 hour. Пример: High error rate, circuit breaker open.
+- **P3 (Medium):** Не влияет на пользователей. Response: next business day. Пример: DLT messages, high consumer lag.
+
+**Alerting Pipeline:** Prometheus → Alertmanager → routing: P1 → PagerDuty (phone call), P2 → Slack #alerts channel, P3 → Slack #monitoring.
+
+**Runbooks:** Для каждого alert — runbook: что проверить, как mitigation, escalation path. Пример: `HighMemoryUsage` → check heap dump → identify leak → restart Pod (short-term) → fix code (long-term).
+
+**Post-mortem:** После каждого P1 — blameless post-mortem: timeline, root cause, action items. Документ в shared drive. Action items добавляются в tech debt backlog.

@@ -67,6 +67,10 @@ create_topic "transfers.notification.redirect"         3   $SEVEN_DAYS_MS
 create_topic "transfers.payment-consumer.dlt"          3   $SEVEN_DAYS_MS
 create_topic "transfers.payout-consumer.dlt"           3   $SEVEN_DAYS_MS
 
+# Notification Delivery — Redirect & Retry topics
+create_topic "notification.delivery.retry"             6   $SEVEN_DAYS_MS
+create_topic "notification.delivery.dlt"               3   $SEVEN_DAYS_MS
+
 echo ""
 echo "============================================"
 echo "All topics created successfully!"

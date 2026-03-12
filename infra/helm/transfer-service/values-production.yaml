@@ -1,0 +1,33 @@
+replicaCount: 4
+
+image:
+  tag: production
+
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "2000m"
+
+spring:
+  profile: production
+
+database:
+  url: "jdbc:postgresql://postgres-production:5432/transferhub"
+
+kafka:
+  bootstrapServers: "kafka-production:9092"
+
+redis:
+  host: "redis-production"
+  port: 6379
+
+unleash:
+  apiUrl: "http://unleash-production:4242/api"
+
+hpa:
+  minReplicas: 4
+  maxReplicas: 16
+  targetCPUUtilization: 50

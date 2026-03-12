@@ -1,0 +1,34 @@
+replicaCount: 2
+
+image:
+  repository: registry.gitlab.com/transferhub/transfer-service
+  tag: latest
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "1000m"
+
+spring:
+  profile: dev
+
+database:
+  url: "jdbc:postgresql://postgres:5432/transferhub"
+
+kafka:
+  bootstrapServers: "kafka:9092"
+
+redis:
+  host: "redis"
+  port: 6379
+
+unleash:
+  apiUrl: "http://unleash:4242/api"
+
+hpa:
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilization: 60

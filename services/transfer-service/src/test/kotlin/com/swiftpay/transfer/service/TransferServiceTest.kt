@@ -3,6 +3,7 @@ package com.swiftpay.transfer.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.swiftpay.transfer.cache.TransferStatusCache
 import com.swiftpay.transfer.client.IdentityClient
 import com.swiftpay.transfer.client.KycStatus
 import com.swiftpay.transfer.client.PricingClient
@@ -45,6 +46,7 @@ class TransferServiceTest {
     private val transferStatusPublisher: TransferStatusPublisher = mockk(relaxed = true)
     private val feeService: FeeService = mockk()
     private val transferMetrics: TransferMetrics = mockk(relaxed = true)
+    private val transferStatusCache: TransferStatusCache = mockk(relaxed = true)
 
     private val objectMapper = ObjectMapper().apply {
         registerKotlinModule()
@@ -121,7 +123,8 @@ class TransferServiceTest {
             identityClient = identityClient,
             transferStatusPublisher = transferStatusPublisher,
             feeService = feeService,
-            transferMetrics = transferMetrics
+            transferMetrics = transferMetrics,
+            transferStatusCache = transferStatusCache
         )
     }
 

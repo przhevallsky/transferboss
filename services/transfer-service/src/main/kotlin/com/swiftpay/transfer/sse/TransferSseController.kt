@@ -14,8 +14,6 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
 import reactor.core.publisher.Flux
-import reactor.core.publisher.Mono
-import reactor.core.scheduler.Schedulers
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -31,14 +29,15 @@ class TransferSseController(
 
     @GetMapping("/{id}/events", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun streamTransferEvents(@PathVariable id: UUID): Flux<ServerSentEvent<String>> {
-        val initialEvent = Mono.fromCallable {
-            val transfer = transferRepository.findTransferById(id)
-                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Transfer not found: $id")
+        val transfer = transferRepository.findTransferById(id)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Transfer not found: $id")
+
+        val initialEvent = Flux.just(
             ServerSentEvent.builder<String>()
                 .event("status")
                 .data("""{"transferId":"$id","status":"${transfer.status.value}","timestamp":"${Instant.now()}"}""")
                 .build()
-        }.subscribeOn(Schedulers.boundedElastic()).flux()
+        )
 
         val redisEvents = listenerContainer
             .receive(ChannelTopic.of("transfer-status:$id"))

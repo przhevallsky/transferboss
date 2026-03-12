@@ -17,6 +17,7 @@ import com.swiftpay.transfer.sse.TransferStatusPublisher
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.RecipientRepository
 import com.swiftpay.transfer.repository.TransferRepository
+import com.swiftpay.transfer.config.CorridorProperties
 import com.swiftpay.transfer.service.dto.CreateTransferCommand
 import io.mockk.*
 import io.mockk.junit5.MockKExtension
@@ -124,7 +125,15 @@ class TransferServiceTest {
             transferStatusPublisher = transferStatusPublisher,
             feeService = feeService,
             transferMetrics = transferMetrics,
-            transferStatusCache = transferStatusCache
+            transferStatusCache = transferStatusCache,
+            corridorProperties = CorridorProperties(
+                corridors = listOf(
+                    CorridorProperties.CorridorConfig("US_PH", "BANK_DEPOSIT,CASH_PICKUP,MOBILE_WALLET", BigDecimal("10.00")),
+                    CorridorProperties.CorridorConfig("US_MX", "BANK_DEPOSIT,CASH_PICKUP", BigDecimal("10.00")),
+                    CorridorProperties.CorridorConfig("GB_IN", "BANK_DEPOSIT,MOBILE_WALLET", BigDecimal("5.00")),
+                    CorridorProperties.CorridorConfig("US_IN", "BANK_DEPOSIT,MOBILE_WALLET", BigDecimal("10.00")),
+                )
+            )
         )
     }
 

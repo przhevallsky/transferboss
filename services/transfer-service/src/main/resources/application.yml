@@ -7,9 +7,9 @@ spring:
     name: transfer-service
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/transferhub
-    username: transferhub
-    password: transferhub
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/transferhub}
+    username: ${DB_USERNAME:transferhub}
+    password: ${DB_PASSWORD:transferhub}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10
@@ -34,12 +34,12 @@ spring:
 
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
       timeout: 2000ms
 
   kafka:
-    bootstrap-servers: localhost:9092
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     listener:
       observation-enabled: true
     template:
@@ -86,7 +86,7 @@ management:
         include: health,info,prometheus,metrics
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
   metrics:
     tags:
       application: ${spring.application.name}
@@ -160,8 +160,23 @@ consul:
     retry-interval-ms: 50
     key-prefix: locks/transfer
 
+transfer:
+  corridors:
+    - corridor-id: US_PH
+      delivery-methods: BANK_DEPOSIT,CASH_PICKUP,MOBILE_WALLET
+      minimum-amount: 10.00
+    - corridor-id: US_MX
+      delivery-methods: BANK_DEPOSIT,CASH_PICKUP
+      minimum-amount: 10.00
+    - corridor-id: GB_IN
+      delivery-methods: BANK_DEPOSIT,MOBILE_WALLET
+      minimum-amount: 5.00
+    - corridor-id: US_IN
+      delivery-methods: BANK_DEPOSIT,MOBILE_WALLET
+      minimum-amount: 10.00
+
 logging:
   level:
-    com.swiftpay: DEBUG
+    com.swiftpay: INFO
     org.springframework.web: INFO
-    org.hibernate.SQL: DEBUG
+    org.hibernate.SQL: WARN

@@ -41,6 +41,9 @@ class SecurityConfig(
     fun securityFilterChain(http: HttpSecurity, jwtDecoder: JwtDecoder): SecurityFilterChain {
         http
             .csrf { it.disable() }
+            .headers { headers ->
+                headers.frameOptions { it.deny() }
+            }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests { auth ->
                 auth

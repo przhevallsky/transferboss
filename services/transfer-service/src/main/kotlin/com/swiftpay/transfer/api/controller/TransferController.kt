@@ -19,6 +19,9 @@ import jakarta.validation.Valid
 import org.slf4j.LoggerFactory
 import org.springframework.http.ProblemDetail
 import org.springframework.http.ResponseEntity
+import org.springframework.security.access.prepost.PreAuthorize
+import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.*
 import java.net.URI
 import java.util.UUID
@@ -44,16 +47,17 @@ class TransferController(
         ApiResponse(responseCode = "422", description = "Business rule violation",
             content = [Content(schema = Schema(implementation = ProblemDetail::class))])
     )
+    @PreAuthorize("hasRole('SENDER')")
     @PostMapping
     fun createTransfer(
         @Valid @RequestBody request: CreateTransferRequest,
         @Parameter(description = "Unique idempotency key (UUID)", required = true)
         @RequestHeader("X-Idempotency-Key") idempotencyKey: UUID,
-        @Parameter(description = "Sender ID (temporary, will be from JWT)", required = false)
-        @RequestHeader("X-Sender-Id", required = false) senderIdHeader: UUID?
+        @AuthenticationPrincipal jwt: Jwt?
     ): ResponseEntity<TransferResponse> {
 
-        val senderId = senderIdHeader ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
+        val senderId = jwt?.subject?.let { UUID.fromString(it) }
+            ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
 
         val command = request.toCommand(senderId = senderId, idempotencyKey = idempotencyKey)
         val (result, isNew) = transferService.createTransfer(command)
@@ -93,11 +97,11 @@ class TransferController(
         return ResponseEntity.ok(response)
     }
 
+    @PreAuthorize("hasAnyRole('SENDER', 'OPERATOR')")
     @Operation(summary = "List transfers with cursor-based pagination")
     @GetMapping
     fun listTransfers(
-        @Parameter(description = "Sender ID")
-        @RequestHeader("X-Sender-Id", required = false) senderIdHeader: UUID?,
+        @AuthenticationPrincipal jwt: Jwt?,
         @Parameter(description = "Opaque cursor from previous response")
         @RequestParam(required = false) cursor: String?,
         @Parameter(description = "Page size (1-100, default 20)")
@@ -108,7 +112,8 @@ class TransferController(
             throw IllegalArgumentException("limit must be between 1 and 100, got: $limit")
         }
 
-        val senderId = senderIdHeader ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
+        val senderId = jwt?.subject?.let { UUID.fromString(it) }
+            ?: UUID.fromString("00000000-0000-0000-0000-000000000001")
         val (results, nextCursor) = transferService.listTransfers(senderId, cursor, limit)
 
         val items = results.map { it.transfer.toResponse(it.recipient) }

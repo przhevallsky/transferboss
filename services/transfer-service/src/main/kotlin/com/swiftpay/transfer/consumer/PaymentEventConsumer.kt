@@ -12,6 +12,7 @@ import com.swiftpay.transfer.repository.ConsumedEventRepository
 import com.swiftpay.transfer.repository.OutboxEventRepository
 import com.swiftpay.transfer.repository.TransferRepository
 import com.swiftpay.transfer.service.TransferCacheService
+import com.swiftpay.transfer.service.TransferMetrics
 import com.swiftpay.transfer.sse.TransferStatusPublisher
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
@@ -38,6 +39,7 @@ class PaymentEventConsumer(
     private val transactionTemplate: TransactionTemplate,
     private val objectMapper: ObjectMapper,
     private val transferStatusPublisher: TransferStatusPublisher,
+    private val transferMetrics: TransferMetrics,
     meterRegistry: MeterRegistry
 ) {
 
@@ -145,6 +147,14 @@ class PaymentEventConsumer(
                 transferStatusPublisher.publishStatusChange(transferId, newStatus.value, previousStatus!!)
                 if (secondaryTransition) {
                     transferStatusPublisher.publishStatusChange(transferId, TransferStatus.PayoutPending.value, newStatus.value)
+                }
+
+                if (newStatus == TransferStatus.PaymentFailed) {
+                    val transfer = transferRepository.findTransferById(transferId)
+                    if (transfer != null) {
+                        val corridor = "${transfer.sourceCountry}_${transfer.destCountry}"
+                        transferMetrics.recordTransferFailed(corridor, event.reason ?: "payment_failed")
+                    }
                 }
             }
         } finally {

@@ -44,6 +44,7 @@ class TransferServiceTest {
     private val identityClient: IdentityClient = mockk()
     private val transferStatusPublisher: TransferStatusPublisher = mockk(relaxed = true)
     private val feeService: FeeService = mockk()
+    private val transferMetrics: TransferMetrics = mockk(relaxed = true)
 
     private val objectMapper = ObjectMapper().apply {
         registerKotlinModule()
@@ -119,7 +120,8 @@ class TransferServiceTest {
             pricingClient = pricingClient,
             identityClient = identityClient,
             transferStatusPublisher = transferStatusPublisher,
-            feeService = feeService
+            feeService = feeService,
+            transferMetrics = transferMetrics
         )
     }
 

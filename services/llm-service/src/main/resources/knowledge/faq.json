@@ -1,0 +1,62 @@
+[
+  {
+    "title": "How to Send a Money Transfer",
+    "content": "To send a money transfer with SwiftPay, follow these steps: 1) Log in to your SwiftPay account or create a new one. 2) Click 'Send Money' on the dashboard. 3) Enter the recipient's full name, country, and contact details. 4) Choose the amount you wish to send and select your preferred currency. 5) Select a delivery method (bank deposit, mobile wallet, or cash pickup). 6) Review the transfer details including fees and exchange rate. 7) Confirm and pay using your preferred payment method (bank transfer, debit card, or credit card). You will receive a confirmation email with your tracking number.",
+    "category": "transfers"
+  },
+  {
+    "title": "Fee Structure and Pricing",
+    "content": "SwiftPay offers competitive and transparent fees. Our fee structure depends on several factors: the sending and receiving countries (corridor), the transfer amount, the payment method, and the delivery method. Typical fees range from $1.99 to $9.99 per transaction. Bank transfers generally have lower fees than card payments. Larger transfers may qualify for reduced fees. Business accounts enjoy volume-based discounts. You can always see the exact fee before confirming your transfer. There are no hidden charges.",
+    "category": "fees"
+  },
+  {
+    "title": "KYC and Identity Verification",
+    "content": "SwiftPay is required by law to verify the identity of all customers. When you create an account, you will need to provide: your full legal name, date of birth, address, and a government-issued photo ID (passport, driver's license, or national ID card). For transfers above certain thresholds, additional documentation may be required such as proof of address (utility bill or bank statement) and proof of source of funds. Verification is typically completed within 24 hours but may take up to 3 business days in some cases.",
+    "category": "compliance"
+  },
+  {
+    "title": "Supported Countries and Corridors",
+    "content": "SwiftPay supports money transfers to over 150 countries worldwide. Our most popular corridors include: US to Mexico, US to India, US to Philippines, UK to Nigeria, UK to Pakistan, Canada to Philippines, and many more. We continuously expand our network. Some corridors may have specific limits or requirements based on local regulations. Check our website or app for the most up-to-date list of supported countries and available delivery methods in each destination.",
+    "category": "transfers"
+  },
+  {
+    "title": "Delivery Methods",
+    "content": "SwiftPay offers multiple delivery methods to suit your recipient's needs: 1) Bank Deposit: Funds are deposited directly into the recipient's bank account. Available in most countries, typically within 1-2 business days. 2) Mobile Wallet: Funds are sent to the recipient's mobile money account (M-Pesa, GCash, etc.). Usually instant. 3) Cash Pickup: The recipient can collect cash at thousands of agent locations worldwide. Available within minutes of sending. 4) Home Delivery: Available in select countries, cash is delivered to the recipient's door.",
+    "category": "delivery"
+  },
+  {
+    "title": "Transfer Limits",
+    "content": "SwiftPay has transfer limits that vary based on your verification level and corridor. For newly verified accounts, the daily limit is typically $2,999 and the monthly limit is $10,000. Fully verified accounts with enhanced due diligence can send up to $50,000 per transaction and $100,000 per month. Business accounts have higher limits based on their approved volume. If you need to increase your limits, contact our support team with additional documentation. All limits are subject to regulatory requirements in both sending and receiving countries.",
+    "category": "transfers"
+  },
+  {
+    "title": "Exchange Rates",
+    "content": "SwiftPay provides competitive exchange rates that are updated in real-time based on market conditions. The exchange rate you see during the transfer process is the rate that will be applied to your transaction. We lock in your rate for 60 seconds while you review your transfer. Our rates include a small margin above the mid-market rate, which is how we keep our fees low. You can check current rates on our website or app without needing to log in. Rate alerts can be set up to notify you when your preferred rate is available.",
+    "category": "fees"
+  },
+  {
+    "title": "Cancellation and Refund Policy",
+    "content": "SwiftPay allows you to cancel a transfer and receive a full refund under the following conditions: The transfer has not yet been picked up or deposited by the recipient. For bank deposits, cancellation is possible if the funds have not been credited to the recipient's account. To cancel, go to your transaction history, select the transfer, and click 'Cancel Transfer'. Refunds are processed within 3-5 business days to your original payment method. If a transfer cannot be completed due to incorrect recipient details, you will be contacted and can amend the details or request a refund.",
+    "category": "transfers"
+  },
+  {
+    "title": "Anti-Money Laundering Compliance",
+    "content": "SwiftPay is fully compliant with all applicable Anti-Money Laundering (AML) regulations. We are registered with FinCEN in the United States and regulated by the FCA in the United Kingdom. Our compliance program includes: transaction monitoring using advanced algorithms, sanctions screening against OFAC, EU, and UN lists, suspicious activity reporting, and regular staff training. We may occasionally request additional information about the purpose of your transfer or the source of funds. This is a regulatory requirement and helps us protect all our customers.",
+    "category": "compliance"
+  },
+  {
+    "title": "Customer Support and Contact Information",
+    "content": "SwiftPay offers 24/7 customer support through multiple channels: 1) Live Chat: Available on our website and mobile app. Average response time is under 2 minutes. 2) Phone: Call us at 1-800-SWIFTPAY (US) or +44-800-SWIFTPAY (UK). 3) Email: support@swiftpay.com — we respond within 4 hours. 4) Help Center: Visit help.swiftpay.com for self-service articles and FAQs. 5) Social Media: Reach us on Twitter @SwiftPaySupport or Facebook. For complaints or escalations, email complaints@swiftpay.com.",
+    "category": "transfers"
+  },
+  {
+    "title": "Account Security and Two-Factor Authentication",
+    "content": "SwiftPay takes your account security seriously. We recommend enabling Two-Factor Authentication (2FA) for an extra layer of protection. You can set up 2FA using an authenticator app (Google Authenticator, Authy) or SMS verification. Additional security features include: biometric login (fingerprint or face ID) on mobile devices, login notifications via email, automatic session timeout after 15 minutes of inactivity, and the ability to view and manage active sessions. If you suspect unauthorized access, contact us immediately and we will lock your account.",
+    "category": "compliance"
+  },
+  {
+    "title": "Business and Corporate Transfers",
+    "content": "SwiftPay offers specialized services for businesses that need to send international payments. Business accounts include: higher transfer limits, volume-based pricing with discounted fees, batch payment processing for multiple recipients, API integration for automated transfers, dedicated account manager, and detailed reporting and analytics. To open a business account, you will need to provide: business registration documents, proof of business address, identification of beneficial owners, and bank account details. Apply online or contact our business team at business@swiftpay.com.",
+    "category": "transfers"
+  }
+]

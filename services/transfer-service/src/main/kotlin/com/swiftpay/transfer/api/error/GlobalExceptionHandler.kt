@@ -191,6 +191,22 @@ class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(problem)
     }
 
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException::class)
+    fun handleResponseStatusException(
+        ex: org.springframework.web.server.ResponseStatusException,
+        request: WebRequest
+    ): ResponseEntity<ProblemDetail> {
+        val problem = ProblemDetail.forStatus(ex.statusCode.value()).apply {
+            type = URI.create("https://api.transferhub.com/errors/http-error")
+            title = ex.reason ?: "Error"
+            detail = ex.message
+            instance = extractPath(request)
+            setProperty("traceId", getTraceId())
+            setProperty("timestamp", Instant.now().toString())
+        }
+        return ResponseEntity.status(ex.statusCode).body(problem)
+    }
+
     @ExceptionHandler(Exception::class)
     fun handleGenericException(
         ex: Exception,

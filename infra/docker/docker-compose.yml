@@ -200,6 +200,7 @@ services:
       PRICING_GRPC_PORT: 9090
       UNLEASH_API_URL: http://transferhub-unleash:4242/api
       UNLEASH_API_TOKEN: "default:development.unleash-insecure-client-token"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://transferhub-tempo:4318/v1/traces
       SPRING_PROFILES_ACTIVE: docker
     networks:
       - transferhub-network
@@ -221,6 +222,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: transferhub-kafka:29092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://transferhub-tempo:4318/v1/traces
       SPRING_PROFILES_ACTIVE: docker
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health/liveness || exit 1"]

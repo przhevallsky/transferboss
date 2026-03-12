@@ -93,6 +93,8 @@ dependencies {
     // Observability
     implementation(libs.logstash.logback)
     implementation(libs.micrometer.prometheus)
+    implementation(libs.micrometer.tracing.bridge.otel)
+    implementation(libs.opentelemetry.exporter.otlp)
 
     // Test
     testImplementation(libs.spring.boot.starter.test) {

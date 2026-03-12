@@ -28,6 +28,8 @@ spring:
   # Kafka Producer
   kafka:
     bootstrap-servers: localhost:9092
+    template:
+      observation-enabled: true
     producer:
       acks: all
       retries: 3
@@ -72,6 +74,14 @@ management:
       percentiles-histogram:
         outbox.poll.duration: true
         outbox.publish.duration: true
+  tracing:
+    sampling:
+      probability: 1.0
+    propagation:
+      type: w3c
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
 
 # Server — different port to avoid conflict with Transfer Service
 server:

@@ -12,6 +12,10 @@ consul:
   lock:
     enabled: false
 
+management:
+  tracing:
+    enabled: false
+
 spring:
   main:
     allow-bean-definition-overriding: true
